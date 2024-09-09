@@ -464,7 +464,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 		latent_tex = self.uvp.set_noise_texture()
 		noise_views = self.uvp.render_textured_views()
-		foregrounds = [view[:-1] for view in noise_views]
+		foregrounds = [view for view in noise_views]
 		masks = [view[-1:] for view in noise_views]
 		composited_tensor = composite_rendered_view(self.scheduler, latents, foregrounds, masks, timesteps[0]+1)
 		latents = composited_tensor.type(latents.dtype)

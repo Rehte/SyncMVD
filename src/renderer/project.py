@@ -638,8 +638,12 @@ class UVProjection():
 			bake_tex = TexturesUV([bake_maps[i]], tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
 			tmp_mesh.textures = bake_tex
 			images_predicted = self.renderer(tmp_mesh, cameras=self.cameras[i], lights=self.lights, device=self.device)
-			predicted_rgb = images_predicted[..., :-1]
-			loss += (((predicted_rgb[...] - views[i]))**2).sum()
+			predicted_rgb = images_predicted[0][..., :-1]
+
+			loss += (((predicted_rgb[...] - views[i][..., :-1]))**2).sum()
+	
+		if not loss.requires_grad:
+			loss.requires_grad_(True)
 		loss.backward(retain_graph=False)
 		optimizer.step()
 
