@@ -295,7 +295,7 @@ class UVProjection():
 		elev = torch.FloatTensor([pose[0] for pose in camera_poses])
 		azim = torch.FloatTensor([pose[1] for pose in camera_poses])
 		R, T = look_at_view_transform(dist=camera_distance, elev=elev, azim=azim, at=centers or ((0,0,0),))
-		self.cameras = FoVOrthographicCameras(devcie=self.device, R=R, T=T, scale_xyz=scale or ((1,1,1),))
+		self.cameras = FoVOrthographicCameras(device=self.device, R=R, T=T, scale_xyz=scale or ((1,1,1),))
 
 
 	# Set all necessary internal data for rendering and texture baking
