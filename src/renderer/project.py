@@ -391,70 +391,70 @@ class UVProjection():
 		self.renderer.shader = HardGeometryShader(device=self.device, cameras=self.cameras[0], lights=self.lights)
 		tmp_mesh = self.mesh.clone()
 
-		raycast = RaycastingImaging()
+		# raycast = RaycastingImaging()
 		
-		for camera in (self.cameras):
-			# c2w = np.array(frame["c2w"])
-			# mesh.export("gt.ply")
-			# Rt = np.linalg.inv(c2w)
+		# for camera in (self.cameras):
+		# 	# c2w = np.array(frame["c2w"])
+		# 	# mesh.export("gt.ply")
+		# 	# Rt = np.linalg.inv(c2w)
 
-			# is this right?
-			Rt = np.matmul(np.array(camera.R), np.array(camera.T))
-			invRt = np.linalg.inv(Rt)
+		# 	# is this right?
+		# 	Rt = np.matmul(np.array(camera.R), np.array(camera.T))
+		# 	invRt = np.linalg.inv(Rt)
 
-			vertices = tmp_mesh.verts_packed().cpu().numpy()  # (V, 3) shape, move to CPU and convert to numpy
-			faces = tmp_mesh.faces_packed().cpu().numpy()  # (F, 3) shape, move to CPU and convert to numpy
+		# 	vertices = tmp_mesh.verts_packed().cpu().numpy()  # (V, 3) shape, move to CPU and convert to numpy
+		# 	faces = tmp_mesh.faces_packed().cpu().numpy()  # (F, 3) shape, move to CPU and convert to numpy
 
-			mesh_frame = trimesh.Trimesh(vertices=vertices, faces=faces).apply_transform(Rt)
+		# 	mesh_frame = trimesh.Trimesh(vertices=vertices, faces=faces).apply_transform(Rt)
 			
-			# mesh_frame.export("trans.ply")
-			c2w = np.eye(4).astype(np.float32)[:3]
+		# 	# mesh_frame.export("trans.ply")
+		# 	c2w = np.eye(4).astype(np.float32)[:3]
 
-			camera_angle_x = camera.fov
-			focal_length = 0.5 * size[0] / np.tan(0.5 * camera_angle_x)
+		# 	camera_angle_x = camera.fov
+		# 	focal_length = 0.5 * size[0] / np.tan(0.5 * camera_angle_x)
 
-			cx = size[0] / 2.0
-			cy = size[1] / 2.0
+		# 	cx = size[0] / 2.0
+		# 	cy = size[1] / 2.0
 
-			intrinsics = np.array([[focal_length, 0, cx],
-								[0, focal_length, cy],
-								[0, 0, 1]])
+		# 	intrinsics = np.array([[focal_length, 0, cx],
+		# 						[0, focal_length, cy],
+		# 						[0, 0, 1]])
 			
-			raycast.prepare(image_height=size[1], image_width=size[0], intrinsics=intrinsics, c2w=c2w)
+		# 	raycast.prepare(image_height=size[1], image_width=size[0], intrinsics=intrinsics, c2w=c2w)
 			
-			ray_indexes, points, normals, colors, direction, mesh_vertex_indexes, mesh_face_indexes = raycast.get_image(mesh_frame)   
+		# 	ray_indexes, points, normals, colors, direction, mesh_vertex_indexes, mesh_face_indexes = raycast.get_image(mesh_frame)   
 			
-			# normalize normals
-			normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
-			colors = colors[:, :3] / 255.0
+		# 	# normalize normals
+		# 	normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
+		# 	colors = colors[:, :3] / 255.0
 
-			# collect points and normals for each ray
-			ray_points = defaultdict(list)
-			ray_normals = defaultdict(list)
-			ray_colors = defaultdict(list)
-			for ray_index, point, normal, color in zip(ray_indexes, points, normals, colors):
-				ray_points[ray_index].append(point)
-				ray_normals[ray_index].append(normal)
-				ray_colors[ray_index].append(color)
+		# 	# collect points and normals for each ray
+		# 	ray_points = defaultdict(list)
+		# 	ray_normals = defaultdict(list)
+		# 	ray_colors = defaultdict(list)
+		# 	for ray_index, point, normal, color in zip(ray_indexes, points, normals, colors):
+		# 		ray_points[ray_index].append(point)
+		# 		ray_normals[ray_index].append(normal)
+		# 		ray_colors[ray_index].append(color)
 
-			# ray to image
-			max_hits = 4
-			GenDepths = np.zeros((max_hits, 1+3+3, size[0], size[1]), dtype=np.float32)
+		# 	# ray to image
+		# 	max_hits = 4
+		# 	GenDepths = np.zeros((max_hits, 1+3+3, size[0], size[1]), dtype=np.float32)
 
-			for i in range(max_hits):
-				for ray_index, ray_point in ray_points.items():
-					if i < len(ray_point):
-						u = ray_index // size[1]
-						v = ray_index % size[1]
-						np.linalg.norm(ray_point[i] - c2w[:, 3])
-						np.linalg.norm(ray_normals[ray_index][i])
-						cos_angle = np.clip(np.dot(np.linalg.norm(ray_point[i] - c2w[:, 3]), np.linalg.norm(ray_normals[ray_index][i])), 0, 1)
+		# 	for i in range(max_hits):
+		# 		for ray_index, ray_point in ray_points.items():
+		# 			if i < len(ray_point):
+		# 				u = ray_index // size[1]
+		# 				v = ray_index % size[1]
+		# 				np.linalg.norm(ray_point[i] - c2w[:, 3])
+		# 				np.linalg.norm(ray_normals[ray_index][i])
+		# 				cos_angle = np.clip(np.dot(np.linalg.norm(ray_point[i] - c2w[:, 3]), np.linalg.norm(ray_normals[ray_index][i])), 0, 1)
 
-						GenDepths[i, 0:3, u, v] = np.dot(invRt, np.append(ray_point[i] - c2w[:, 3], 1))[:3]
-						GenDepths[i, 3:6, u, v] = np.dot(invRt, np.append(ray_normals[ray_index][i], 0))[:3]
-						GenDepths[i, 6, u, v] = np.linalg.norm(ray_point[i] - c2w[:, 3])
-						GenDepths[i, 7, u, v] = cos_angle
-						# GenDepths[i, 4:7, u, v] = ray_colors[ray_index][i]
+		# 				GenDepths[i, 0:3, u, v] = np.dot(invRt, np.append(ray_point[i] - c2w[:, 3], 1))[:3]
+		# 				GenDepths[i, 3:6, u, v] = np.dot(invRt, np.append(ray_normals[ray_index][i], 0))[:3]
+		# 				GenDepths[i, 6, u, v] = np.linalg.norm(ray_point[i] - c2w[:, 3])
+		# 				GenDepths[i, 7, u, v] = cos_angle
+		# 				# GenDepths[i, 4:7, u, v] = ray_colors[ray_index][i]
 		
 		# TODO: Implement XRay, How do I get fXXXing cos_angles?
 		# 09/04 : I guess depth and cos_angle would be needed
