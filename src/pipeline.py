@@ -62,6 +62,8 @@ color_names = list(color_constants.keys())
 # Used to generate depth or normal conditioning images
 @torch.no_grad()
 def get_conditioning_images(uvp, output_size, render_size=512, blur_filter=5, cond_type="normal"):
+	# Add Occluded Views Decoding Code
+
 	verts, normals, depths, cos_maps, texels, fragments = uvp.render_geometry(image_size=render_size)
 	masks = normals[...,3][:,None,...]
 	masks = Resize((output_size//8,)*2, antialias=True)(masks)
@@ -235,10 +237,11 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		# Calculate in-group attention mask
 		self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views)
 
+		max_hits = 1
 
 		# Set up pytorch3D for projection between screen space and UV space
 		# uvp is for latent and uvp_rgb for rgb color
-		self.uvp = UVP(texture_size=texture_size, render_size=latent_size, sampling_mode="nearest", channels=4, device=self._execution_device)
+		self.uvp = UVP(texture_size=texture_size, render_size=latent_size, sampling_mode="nearest", channels=4, device=self._execution_device, max_hits=max_hits)
 		if mesh_path.lower().endswith(".obj"):
 			self.uvp.load_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
 		elif mesh_path.lower().endswith(".glb"):
@@ -248,7 +251,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		self.uvp.set_cameras_and_render_settings(self.camera_poses, centers=camera_centers, camera_distance=4.0)
 
 
-		self.uvp_rgb = UVP(texture_size=texture_rgb_size, render_size=render_rgb_size, sampling_mode="nearest", channels=3, device=self._execution_device)
+		self.uvp_rgb = UVP(texture_size=texture_rgb_size, render_size=render_rgb_size, sampling_mode="nearest", channels=3, device=self._execution_device, max_hits=max_hits)
 		self.uvp_rgb.mesh = self.uvp.mesh.clone()
 		self.uvp_rgb.set_cameras_and_render_settings(self.camera_poses, centers=camera_centers, camera_distance=4.0)
 		# _,_,_,cos_maps,_, _ = self.uvp_rgb.render_geometry()
@@ -537,7 +540,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 						prompt_embeds_batches = [torch.index_select(controlnet_prompt_embeds, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
 						conditioning_images_batches = [torch.index_select(conditioning_images, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
 
-						for model_input_batch ,prompt_embeds_batch, conditioning_images_batch \
+						for model_input_batch, prompt_embeds_batch, conditioning_images_batch \
 							in zip (model_input_batches, prompt_embeds_batches, conditioning_images_batches):
 							down_block_res_samples, mid_block_res_sample = self.controlnet(
 								model_input_batch,

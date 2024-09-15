@@ -169,7 +169,7 @@ def ray_cast_mesh(mesh, rays_origins, ray_directions):
 # Stable Diffusion has 4 latent channels so use channels=4
 
 class UVProjection():
-	def __init__(self, texture_size=96, render_size=64, sampling_mode="nearest", channels=3, device=None):
+	def __init__(self, texture_size=96, render_size=64, sampling_mode="nearest", channels=3, device=None, max_hits=1):
 		self.channels = channels
 		self.device = device or torch.device("cpu")
 		self.lights = AmbientLights(ambient_color=((1.0,)*channels,), device=self.device)
@@ -177,7 +177,7 @@ class UVProjection():
 		self.render_size = render_size
 		self.sampling_mode = sampling_mode
 
-		self.max_hits = 1
+		self.max_hits = max_hits
 		self.occ_mesh = None
 
 
@@ -652,6 +652,8 @@ class UVProjection():
 			triangle_mask[1:,:][triangle_mask[:-1,:] > 0] = 1
 			triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
 			visible_triangles.append(triangle_mask)
+
+		# Add Visible Faces for Each Occluded Views
 
 		self.visible_triangles = visible_triangles
 
