@@ -1,8 +1,10 @@
+import numpy as np
+from collections import defaultdict
+
 import torch
 import pytorch3d
 from trimesh.ray.ray_pyembree import RayMeshIntersector
 from trimesh import Trimesh
-
 
 from pytorch3d.io import load_objs_as_meshes, load_obj, save_obj, IO
 
@@ -25,8 +27,6 @@ from .geometry import HardGeometryShader
 from .shader import HardNChannelFlatShader
 from .voronoi import voronoi_solve
 
-import numpy as np
-
 # Copied from XRay
 class RaycastingImaging:
 	def __init__(self):
@@ -38,6 +38,9 @@ class RaycastingImaging:
 		del self.rays_directions
 
 	def prepare(self, image_height, image_width, c2w=None):
+		self.image_height = image_height
+		self.image_width = image_width
+		self.c2w = c2w
 		# scanning radius is determined from the mesh extent
 		self.rays_screen_coords, self.rays_origins, self.rays_directions = generate_rays((image_height, image_width), c2w)
 	
@@ -57,6 +60,37 @@ class RaycastingImaging:
 		# assemble mesh fragment into a submesh
 		# nbhood = reindex_zerobased(mesh, mesh_vertex_indexes, mesh_face_indexes)
 		# return ray_indexes, points, normals, nbhood, mesh_vertex_indexes, mesh_face_indexes
+
+	def get_face_features(self, mesh, max_hits=4):
+		index_triangles, index_ray, points = ray_cast_mesh(mesh, self.rays_origins, self.rays_directions)
+
+		normals = mesh.face_normals[index_triangles]
+		colors = mesh.visual.face_colors[index_triangles][:, :3] / 255.0
+
+		# index_triangles = np.unique(index_triangles)
+	
+		GenDepths = np.ones((max_hits, 1 + 3 + 3 + 1, self.image_height, self.image_width), dtype=np.float32)
+		GenDepths[:, :4, :, :] = 0 # set depth and normal to zero while color is by default 1 (white)
+		GenDepths[:, 7, :, :] = -1 # set face index to -1 by default
+
+		hits_per_ray = defaultdict(list)
+		for idx, ray_idx in enumerate(index_ray):
+			hits_per_ray[ray_idx].append((points[idx], normals[idx], colors[idx], index_triangles[idx]))
+
+        # Populate the hit images
+		for i in range(max_hits):
+			for ray_idx in range(self.image_height * self.image_width):
+				if i < len(hits_per_ray[ray_idx]):
+					u, v = divmod(ray_idx, self.image_width)
+					point, normal, color, face_idx = hits_per_ray[ray_idx][i]
+					depth = np.linalg.norm(point - self.c2w[:3, 3])
+
+					GenDepths[i, 0, u, v] = depth
+					GenDepths[i, 1:4, u, v] = normal
+					GenDepths[i, 4:7, u, v] = color
+					GenDepths[i, 7, u, v] = face_idx
+		return GenDepths
+		
 
 def get_rays(directions, c2w, near = 1):
 	"""
@@ -322,6 +356,8 @@ class UVProjection():
 			self.disconnect_faces()
 		if not hasattr(self, "mesh_uv"):
 			self.construct_uv_mesh()
+		
+		self.generate_occluded_meshes()
 		self.calculate_tex_gradient()
 		self.calculate_visible_triangle_mask()
 		_,_,_,cos_maps,_, _ = self.render_geometry()
@@ -390,6 +426,54 @@ class UVProjection():
 			cos_maps.append(zero_map)
 		self.cos_maps = cos_maps
 
+	def generate_occluded_meshes(self):
+		if self.occ_mesh is not None:
+			return
+		
+		size = [self.renderer.rasterizer.raster_settings.image_size * 2 for _ in range(2)]
+
+		vertices = self.mesh.verts_packed().cpu().numpy()  # (V, 3) shape, move to CPU and convert to numpy
+		faces = self.mesh.faces_packed().cpu().numpy()  # (F, 3) shape, move to CPU and convert to numpy
+
+		raycast = RaycastingImaging()
+
+		visible_faces_list = []
+		
+		for camera in self.cameras:
+			R = camera.R.cpu().numpy()
+			T = camera.T.cpu().numpy()
+
+			Rt = np.eye(4)  # Start with an identity matrix
+			Rt[:3, :3] = R  # Top-left 3x3 is the transposed rotation
+			Rt[:3, 3] = T   # Top-right 3x1 is the inverted translation
+
+			mesh_frame = Trimesh(vertices=vertices, faces=faces).apply_transform(Rt)
+
+			c2w = np.eye(4).astype(np.float32)[:3]
+			raycast.prepare(image_height=size[1], image_width=size[0], c2w=c2w)
+			gen_depths = raycast.get_face_features(mesh_frame, max_hits=self.max_hits)
+			face_ids_list = gen_depths[:, 7].reshape(self.max_hits, -1)
+			# face_ids_list = [faces[faces != -1] for faces in face_ids_list]
+			face_ids_list = [np.unique(faces[faces != -1]) for faces in face_ids_list]
+			
+			# ray_indexes, points, normals, colors, direction, mesh_vertex_indexes, mesh_face_indexes = raycast.get_image(mesh_frame)   
+			
+			for i in range(self.max_hits):
+				mesh_face_indexes = face_ids_list[i]
+				mesh_face_indexes = np.hstack([mesh_face_indexes, np.array([mesh_face_indexes[-1] for _ in range(faces.shape[0] - len(mesh_face_indexes))])]).astype(int)
+				visible_faces = faces[mesh_face_indexes]  # Only keep the visible faces
+				visible_faces = torch.tensor(visible_faces, dtype=torch.int64, device='cuda')
+				# print(visible_faces)
+
+				visible_faces_list.append(visible_faces)
+
+		# verts_tensor = torch.stack([self.mesh.verts_packed()] * len(self.cameras), dim=0)
+		# faces_tensor = torch.stack(visible_faces_list, dim=1)  # Shape: (num_meshes, num_total_faces, 3)
+		
+		extended_vertices = [self.mesh.verts_packed()] * len(self.cameras) * self.max_hits
+		extended_texture = self.mesh.textures.extend(len(self.cameras)*self.max_hits)
+		self.occ_mesh = Meshes(verts = extended_vertices, faces = visible_faces_list, textures = extended_texture)
+
 	def generate_occluded_geometry(self):
 		if self.occ_mesh is not None:
 			return
@@ -420,7 +504,7 @@ class UVProjection():
 			
 			for i in range(self.max_hits):
 				# print(faces.shape, len(mesh_face_indexes))
-				mesh_face_indexes = np.hstack([mesh_face_indexes, np.array([mesh_face_indexes[-1] for _ in range(faces.shape[0] - len(mesh_face_indexes))])])
+				mesh_face_indexes = np.hstack([mesh_face_indexes, np.array([mesh_face_indexes[-1] for _ in range(faces.shape[0] - len(mesh_face_indexes))])]).astype(int)
 				visible_faces = faces[mesh_face_indexes]  # Only keep the visible faces
 				visible_faces = torch.tensor(visible_faces, dtype=torch.int64, device='cuda')
 				# print(visible_faces)
@@ -430,7 +514,7 @@ class UVProjection():
 		verts_tensor = torch.stack([self.mesh.verts_packed()] * len(self.cameras), dim=0)
 		faces_tensor = torch.stack(visible_faces_list, dim=1)  # Shape: (num_meshes, num_total_faces, 3)
 
-		self.occ_mesh = Meshes(verts = [self.mesh.verts_packed()] * len(self.cameras), faces = visible_faces_list, textures = self.mesh.textures.extend(len(self.cameras)))
+		self.occ_mesh = Meshes(verts = [self.mesh.verts_packed()] * len(self.cameras) * self.max_hits, faces = visible_faces_list, textures = self.mesh.textures.extend(len(self.cameras)*self.max_hits))
 
 
 	# Get geometric info from fragment shader
@@ -446,7 +530,7 @@ class UVProjection():
 		tmp_mesh = self.mesh.clone()
 		
 		# TODO: Implement XRay
-		self.generate_occluded_geometry()
+		# self.generate_occluded_geometry()
 		
 		verts, normals, depths, cos_angles, texels, fragments = self.renderer(self.occ_mesh, cameras=self.cameras, lights=self.lights)
 		self.renderer.shader = shader

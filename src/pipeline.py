@@ -251,11 +251,11 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		self.uvp_rgb = UVP(texture_size=texture_rgb_size, render_size=render_rgb_size, sampling_mode="nearest", channels=3, device=self._execution_device)
 		self.uvp_rgb.mesh = self.uvp.mesh.clone()
 		self.uvp_rgb.set_cameras_and_render_settings(self.camera_poses, centers=camera_centers, camera_distance=4.0)
-		_,_,_,cos_maps,_, _ = self.uvp_rgb.render_geometry()
-		self.uvp_rgb.calculate_cos_angle_weights(cos_maps, fill=False)
+		# _,_,_,cos_maps,_, _ = self.uvp_rgb.render_geometry()
+		# self.uvp_rgb.calculate_cos_angle_weights(cos_maps, fill=False)
 
 		# Save some VRAM
-		del _, cos_maps
+		# del _, cos_maps
 		self.uvp.to("cpu")
 		self.uvp_rgb.to("cpu")
 
