@@ -775,10 +775,12 @@ class UVProjection():
 		baked = voronoi_solve(baked, total_weights[...,0])
 
 		# TODO: Merge Textures from different meshes
-		bake_tex = TexturesUV([baked], self.occ_mesh[0].textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
-		tmp_mesh.textures = bake_tex
-		extended_mesh = tmp_mesh.extend(len(self.cameras))
-		images_predicted = self.renderer(extended_mesh, cameras=self.cameras, lights=self.lights)
+		for i, mesh in enumerate(self.occ_mesh):
+			# Create a unique bake_tex for each mesh
+			bake_tex = TexturesUV([baked], mesh.textures.faces_uvs_padded(), mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+			# Set the mesh's texture
+			mesh.textures = bake_tex
+		images_predicted = self.renderer(self.occ_mesh, cameras=self.cameras, lights=self.lights)
 		learned_views = [image.permute(2, 0, 1) for image in images_predicted]
 
 		return learned_views, baked.permute(2, 0, 1), total_weights.permute(2, 0, 1)
@@ -822,7 +824,6 @@ class UVProjection():
 		baked /= total_weights + 1E-8
 		baked = voronoi_solve(baked, total_weights[...,0])
 
-		# TODO: Merge Textures from different meshes
 		bake_tex = TexturesUV([baked], tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
 		tmp_mesh.textures = bake_tex
 		extended_mesh = tmp_mesh.extend(len(self.cameras))
