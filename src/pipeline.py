@@ -61,7 +61,7 @@ color_names = list(color_constants.keys())
 
 # Used to generate depth or normal conditioning images
 @torch.no_grad()
-def get_conditioning_images(uvp, output_size, render_size=512, blur_filter=5, cond_type="normal"):
+def get_conditioning_images(uvp: UVP, output_size, render_size=512, blur_filter=5, cond_type="normal"):
 	# Add Occluded Views Decoding Code
 
 	verts, normals, depths, cos_maps, texels, fragments = uvp.render_geometry(image_size=render_size)
@@ -109,7 +109,7 @@ def split_groups(attention_mask, max_batch_size, ref_view=[]):
 	idx = 0
 	while idx < len(attention_mask):
 		new_group = group | set([idx])
-		new_ref_group = (ref_group | set(attention_mask[idx] + ref_view)) - new_group 
+		new_ref_group = (ref_group | set(attention_mask[idx] + ref_view)) - new_group
 		if len(new_group) + len(new_ref_group) <= max_batch_size:
 			group = new_group
 			ref_group = new_ref_group
@@ -186,6 +186,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 			max_batch_size=24,
 			logging_config=None,
+			max_hits=1,
 		):
 		# Make output dir
 		output_dir = logging_config["output_dir"]
@@ -234,10 +235,15 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		if len(ref_views) == 0:
 			ref_views = [front_view_idx]
 
+		for i in range(max_hits-1):
+			# Create new sublists by adding cam_count to each element of the original sublists
+			new_attention_mask = [[x + cam_count*(i+1) for x in sublist] for sublist in self.attention_mask]
+
+			# Extend the original attention_mask with the new sublists
+			self.attention_mask.extend(new_attention_mask)
+
 		# Calculate in-group attention mask
 		self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views)
-
-		max_hits = 1
 
 		# Set up pytorch3D for projection between screen space and UV space
 		# uvp is for latent and uvp_rgb for rgb color
@@ -331,6 +337,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 		logging_config=None,
 		cond_type="depth",
+		max_hits=1,
 	):
 		
 
@@ -350,7 +357,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 				max_batch_size=max_batch_size,
 
-				logging_config=logging_config
+				logging_config=logging_config,
+				max_hits=max_hits
 			)
 
 
@@ -466,7 +474,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		)
 
 		latent_tex = self.uvp.set_noise_texture()
-		noise_views = self.uvp.render_textured_views()
+		# noise_views = self.uvp.render_textured_views()
+		noise_views = self.uvp.redner_occ_textured_views()
 		foregrounds = [view[:-1] for view in noise_views]
 		masks = [view[-1:] for view in noise_views]
 		composited_tensor = composite_rendered_view(self.scheduler, latents, foregrounds, masks, timesteps[0]+1)
@@ -497,10 +506,10 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 			for i, t in enumerate(timesteps):
 
 				# mix prompt embeds according to azim angle
-				positive_prompt_embeds = [azim_prompt(prompt_embed_dict, pose) for pose in self.camera_poses]
+				positive_prompt_embeds = [azim_prompt(prompt_embed_dict, pose) for pose in self.camera_poses] * max_hits
 				positive_prompt_embeds = torch.stack(positive_prompt_embeds, axis=0)
 
-				negative_prompt_embeds = [azim_neg_prompt(negative_prompt_embed_dict, pose) for pose in self.camera_poses]
+				negative_prompt_embeds = [azim_neg_prompt(negative_prompt_embed_dict, pose) for pose in self.camera_poses] * max_hits
 				negative_prompt_embeds = torch.stack(negative_prompt_embeds, axis=0)
 
 

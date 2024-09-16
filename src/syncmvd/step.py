@@ -1,6 +1,8 @@
 import torch
 from diffusers.utils import randn_tensor
 
+from ..renderer.project import UVProjection as UVP
+
 '''
 
 	Customized Step Function
@@ -11,7 +13,7 @@ from diffusers.utils import randn_tensor
 @torch.no_grad()
 def step_tex(
 		scheduler,
-		uvp,
+		uvp: UVP,
 		model_output: torch.FloatTensor,
 		timestep: int,
 		sample: torch.FloatTensor,
@@ -79,7 +81,8 @@ def step_tex(
 
 
 	original_views = [view for view in pred_original_sample]
-	original_views, original_tex, visibility_weights = uvp.bake_texture(views=original_views, main_views=main_views, exp=exp)
+	# original_views, original_tex, visibility_weights = uvp.bake_texture(views=original_views, main_views=main_views, exp=exp)
+	original_views, original_tex, visibility_weights = uvp.occ_bake_texture(views=original_views, main_views=main_views, exp=exp)
 	uvp.set_texture_map(original_tex)
 	original_views = uvp.render_textured_views()
 	original_views = torch.stack(original_views, axis=0)[:,:-1,...]

@@ -179,6 +179,7 @@ class UVProjection():
 
 		self.max_hits = max_hits
 		self.occ_mesh = None
+		self.face_ids_list = None
 
 
 	# Load obj mesh, rescale the mesh to fit into the bounding box
@@ -341,7 +342,11 @@ class UVProjection():
 		elev = torch.FloatTensor([pose[0] for pose in camera_poses])
 		azim = torch.FloatTensor([pose[1] for pose in camera_poses])
 		R, T = look_at_view_transform(dist=camera_distance, elev=elev, azim=azim, at=centers or ((0,0,0),))
-		self.cameras = FoVOrthographicCameras(device=self.device, R=R, T=T, scale_xyz=scale or ((1,1,1),))
+		# Repeat R and T self.max_hits times along the first dimension
+		R_repeated = R.repeat(self.max_hits, 1, 1)  # Repeat along the batch dimension
+		T_repeated = T.repeat(self.max_hits, 1)     # Repeat along the batch dimension
+		self.cameras = FoVOrthographicCameras(device=self.device, R=R_repeated, T=T_repeated, scale_xyz=scale or ((1, 1, 1),))
+		# self.cameras = FoVOrthographicCameras(device=self.device, R=R, T=T, scale_xyz=scale or ((1,1,1),))
 
 
 	# Set all necessary internal data for rendering and texture baking
@@ -404,8 +409,8 @@ class UVProjection():
 			channels = self.channels
 		cos_maps = []
 		tmp_mesh = self.mesh.clone()
-		for i in range(len(self.cameras)):
-			
+		for i in range(len(self.occ_mesh)):
+			tmp_mesh = self.occ_mesh[i].clone()
 			zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
 			optimizer = torch.optim.SGD([zero_map], lr=1, momentum=0)
 			optimizer.zero_grad()
@@ -419,12 +424,32 @@ class UVProjection():
 			optimizer.step()
 
 			if fill:
-				zero_map = zero_map.detach() / (self.gradient_maps[i] + 1E-8)
-				zero_map = voronoi_solve(zero_map, self.gradient_maps[i][...,0])
+				zero_map = zero_map.detach() / (self.occ_gradient_maps[i] + 1E-8)
+				zero_map = voronoi_solve(zero_map, self.occ_gradient_maps[i][...,0])
 			else:
-				zero_map = zero_map.detach() / (self.gradient_maps[i]+1E-8)
+				zero_map = zero_map.detach() / (self.occ_gradient_maps[i]+1E-8)
 			cos_maps.append(zero_map)
 		self.cos_maps = cos_maps
+
+	@staticmethod
+	def rearrange_camera_major_to_hit_major(original_list, num_cameras, max_hits):
+		"""
+		Rearranges a camera-major ordered list to hit-major order.
+
+		Parameters:
+		- original_list (list): Camera-major ordered list.
+		- num_cameras (int): Number of cameras.
+		- max_hits (int): Number of max_hits.
+
+		Returns:
+		- list: Hit-major ordered list.
+		"""
+		rearranged = []
+		for hit_idx in range(max_hits):
+			for camera_idx in range(num_cameras):
+				original_idx = camera_idx * max_hits + hit_idx
+				rearranged.append(original_list[original_idx])
+		return rearranged
 
 	def generate_occluded_meshes(self):
 		if self.occ_mesh is not None:
@@ -438,6 +463,8 @@ class UVProjection():
 		raycast = RaycastingImaging()
 
 		visible_faces_list = []
+
+		self.face_ids_list = []
 		
 		for camera in self.cameras:
 			R = camera.R.cpu().numpy()
@@ -455,6 +482,7 @@ class UVProjection():
 			face_ids_list = gen_depths[:, 7].reshape(self.max_hits, -1)
 			# face_ids_list = [faces[faces != -1] for faces in face_ids_list]
 			face_ids_list = [np.unique(faces[faces != -1]) for faces in face_ids_list]
+			self.face_ids_list.extend(face_ids_list)
 			
 			# ray_indexes, points, normals, colors, direction, mesh_vertex_indexes, mesh_face_indexes = raycast.get_image(mesh_frame)   
 			
@@ -469,10 +497,14 @@ class UVProjection():
 
 		# verts_tensor = torch.stack([self.mesh.verts_packed()] * len(self.cameras), dim=0)
 		# faces_tensor = torch.stack(visible_faces_list, dim=1)  # Shape: (num_meshes, num_total_faces, 3)
+		visible_faces_list = self.rearrange_camera_major_to_hit_major(visible_faces_list, len(self.cameras), self.max_hits)
+
 		
 		extended_vertices = [self.mesh.verts_packed()] * len(self.cameras) * self.max_hits
-		extended_texture = self.mesh.textures.extend(len(self.cameras)*self.max_hits)
+		extended_texture = self.mesh.textures.extend(len(self.cameras) * self.max_hits)
 		self.occ_mesh = Meshes(verts = extended_vertices, faces = visible_faces_list, textures = extended_texture)
+
+		self.face_ids_list = self.rearrange_camera_major_to_hit_major(self.face_ids_list, len(self.cameras), self.max_hits)
 
 	def generate_occluded_geometry(self):
 		if self.occ_mesh is not None:
@@ -602,6 +634,24 @@ class UVProjection():
 
 		self.gradient_maps = gradient_maps
 
+		occ_gradient_maps = []
+		for i in range(len(self.occ_mesh)):
+			tmp_mesh = self.occ_mesh[i].clone()
+			camera = self.cameras[i % len(self.cameras)]
+			zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
+			optimizer = torch.optim.SGD([zero_map], lr=1, momentum=0)
+			optimizer.zero_grad()
+			zero_tex = TexturesUV([zero_map], self.mesh.textures.faces_uvs_padded(), self.mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+			tmp_mesh.textures = zero_tex
+			images_predicted = self.renderer(tmp_mesh, cameras=camera, lights=self.lights)
+			loss = torch.sum((1 - images_predicted)**2)
+			loss.backward()
+			optimizer.step()
+
+			occ_gradient_maps.append(zero_map.detach())
+		
+		self.occ_gradient_maps = occ_gradient_maps
+
 
 	# Get the UV space masks of triangles visible in each view
 	# First get face ids from each view, then filter pixels on UV space to generate masks
@@ -653,9 +703,23 @@ class UVProjection():
 			triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
 			visible_triangles.append(triangle_mask)
 
-		# Add Visible Faces for Each Occluded Views
-
 		self.visible_triangles = visible_triangles
+
+		occluded_visible_triangles = []
+		# Add Visible Faces for Each Occluded Views
+		for idx, face_ids in enumerate(self.face_ids_list):
+			face_ids = torch.tensor(face_ids, device=self.device)
+			mask = torch.isin(uv_pix2face[0], face_ids, assume_unique=False)
+			triangle_mask = torch.ones(self.target_size+(1,), device=self.device)
+			triangle_mask[~mask] = 0
+			
+			triangle_mask[:,1:][triangle_mask[:,:-1] > 0] = 1
+			triangle_mask[:,:-1][triangle_mask[:,1:] > 0] = 1
+			triangle_mask[1:,:][triangle_mask[:-1,:] > 0] = 1
+			triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
+			occluded_visible_triangles.append(triangle_mask)
+
+		self.occluded_visible_triangles = occluded_visible_triangles
 
 
 
@@ -665,13 +729,65 @@ class UVProjection():
 		images_predicted = self.renderer(meshes, cameras=self.cameras, lights=self.lights)
 
 		return [image.permute(2, 0, 1) for image in images_predicted]
+	
+	def redner_occ_textured_views(self):
+		meshes = self.occ_mesh
+		images_predicted = self.renderer(meshes, cameras=self.cameras, lights=self.lights)
+
+		return [image.permute(2, 0, 1) for image in images_predicted]
+	
+	@torch.enable_grad()
+	def occ_bake_texture(self, views=None, main_views=[], cos_weighted=True, channels=None, exp=None, noisy=False, generator=None):
+		if not exp:
+			exp=1
+		if not channels:
+			channels = self.channels
+		views = [view.permute(1, 2, 0) for view in views]
+
+		tmp_mesh = self.mesh
+		bake_maps = [torch.zeros(self.target_size+(views[0].shape[2],), device=self.device, requires_grad=True) for view in views]
+		optimizer = torch.optim.SGD(bake_maps, lr=1, momentum=0)
+		optimizer.zero_grad()
+		loss = 0
+		for i in range(len(self.occ_mesh)):
+			tmp_mesh = self.occ_mesh[i]
+			camera = self.cameras[i]
+			bake_tex = TexturesUV([bake_maps[i]], tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+			tmp_mesh.textures = bake_tex
+			images_predicted = self.renderer(tmp_mesh, cameras=camera, lights=self.lights, device=self.device)
+			predicted_rgb = images_predicted[..., :-1]
+			loss += (((predicted_rgb[...] - views[i]))**2).sum()
+		loss.backward(retain_graph=False)
+		optimizer.step()
+
+		total_weights = 0
+		baked = 0
+		for i in range(len(bake_maps)):
+			normalized_baked_map = bake_maps[i].detach() / (self.occ_gradient_maps[i] + 1E-8)
+			bake_map = voronoi_solve(normalized_baked_map, self.occ_gradient_maps[i][...,0])
+			weight = self.occluded_visible_triangles[i] * (self.cos_maps[i]) ** exp
+			if noisy:
+				noise = torch.rand(weight.shape[:-1]+(1,), generator=generator).type(weight.dtype).to(weight.device)
+				weight *= noise
+			total_weights += weight
+			baked += bake_map * weight
+		baked /= total_weights + 1E-8
+		baked = voronoi_solve(baked, total_weights[...,0])
+
+		# TODO: Merge Textures from different meshes
+		bake_tex = TexturesUV([baked], self.occ_mesh[0].textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+		tmp_mesh.textures = bake_tex
+		extended_mesh = tmp_mesh.extend(len(self.cameras))
+		images_predicted = self.renderer(extended_mesh, cameras=self.cameras, lights=self.lights)
+		learned_views = [image.permute(2, 0, 1) for image in images_predicted]
+
+		return learned_views, baked.permute(2, 0, 1), total_weights.permute(2, 0, 1)
 
 
 	# Bake views into a texture
 	# First bake into individual textures then combine based on cosine weight
 	@torch.enable_grad()
 	def bake_texture(self, views=None, main_views=[], cos_weighted=True, channels=None, exp=None, noisy=False, generator=None):
-		# TODO: Implement texture baking w/ occluded region
 		if not exp:
 			exp=1
 		if not channels:
@@ -706,6 +822,7 @@ class UVProjection():
 		baked /= total_weights + 1E-8
 		baked = voronoi_solve(baked, total_weights[...,0])
 
+		# TODO: Merge Textures from different meshes
 		bake_tex = TexturesUV([baked], tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
 		tmp_mesh.textures = bake_tex
 		extended_mesh = tmp_mesh.extend(len(self.cameras))
