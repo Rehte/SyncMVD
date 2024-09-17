@@ -84,7 +84,7 @@ def step_tex(
 	# original_views, original_tex, visibility_weights = uvp.bake_texture(views=original_views, main_views=main_views, exp=exp)
 	original_views, original_tex, visibility_weights = uvp.occ_bake_texture(views=original_views, main_views=main_views, exp=exp)
 	uvp.set_texture_map(original_tex)
-	original_views = uvp.render_textured_views()
+	original_views = uvp.redner_occ_textured_views()
 	original_views = torch.stack(original_views, axis=0)[:,:-1,...]
 
 	# 5. Compute predicted previous sample µ_t
@@ -97,7 +97,7 @@ def step_tex(
 
 	if predicted_variance is not None:
 		variance_views = [view for view in predicted_variance]
-		variance_views, variance_tex, visibility_weights = uvp.bake_texture(views=variance_views, main_views=main_views, cos_weighted=cos_weighted, exp=exp)
+		variance_views, variance_tex, visibility_weights = uvp.occ_bake_texture(views=variance_views, main_views=main_views, cos_weighted=cos_weighted, exp=exp)
 		variance_views = torch.stack(variance_views, axis=0)[:,:-1,...]
 	else:
 		variance_tex = None
@@ -118,7 +118,7 @@ def step_tex(
 	prev_tex = prev_tex + variance
 
 	uvp.set_texture_map(prev_tex)
-	prev_views = uvp.render_textured_views()
+	prev_views = uvp.redner_occ_textured_views()
 	pred_prev_sample = torch.clone(sample)
 	for i, view in enumerate(prev_views):
 		pred_prev_sample[i] = view[:-1]

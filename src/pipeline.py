@@ -760,7 +760,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 
 		self.uvp_rgb.set_texture_map(result_tex_rgb)
-		textured_views = self.uvp_rgb.render_textured_views()
+		textured_views = self.uvp_rgb.redner_occ_textured_views()
 		textured_views_rgb = torch.cat(textured_views, axis=-1)[:-1,...]
 		textured_views_rgb = textured_views_rgb.permute(1,2,0).cpu().numpy()[None,...]
 		v = numpy_to_pil(textured_views_rgb)[0]

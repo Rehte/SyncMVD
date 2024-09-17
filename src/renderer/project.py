@@ -326,6 +326,15 @@ class UVProjection():
 			)
 		self.mesh.textures = new_tex
 
+		for i in range(len(self.occ_mesh)):
+			new_tex = TexturesUV(
+				[new_map],
+				self.occ_mesh[i].textures.faces_uvs_padded(),
+				self.occ_mesh[i].textures.verts_uvs_padded(),
+				sampling_mode=self.sampling_mode
+			)
+			self.occ_mesh[i].textures = new_tex
+
 
 	# Set the initial normal noise texture
 	# No generator here for replication of the experiment result. Add one as you wish
@@ -410,11 +419,13 @@ class UVProjection():
 		cos_maps = []
 		tmp_mesh = self.mesh.clone()
 		for i in range(len(self.occ_mesh)):
+			print(f"i: {i}")
 			tmp_mesh = self.occ_mesh[i].clone()
+			# tmp_mesh = tmp_mesh.clone()
 			zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
 			optimizer = torch.optim.SGD([zero_map], lr=1, momentum=0)
 			optimizer.zero_grad()
-			zero_tex = TexturesUV([zero_map], self.mesh.textures.faces_uvs_padded(), self.mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+			zero_tex = TexturesUV([zero_map], tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
 			tmp_mesh.textures = zero_tex
 
 			images_predicted = self.renderer(tmp_mesh, cameras=self.cameras[i], lights=self.lights)
@@ -450,7 +461,15 @@ class UVProjection():
 				original_idx = camera_idx * max_hits + hit_idx
 				rearranged.append(original_list[original_idx])
 		return rearranged
-
+	
+	def verify_face_indices(self, visible_faces_list):
+		num_faces = self.mesh.faces_packed().shape[0]
+		for i, faces in enumerate(visible_faces_list):
+			if torch.any(faces < 0):
+				print(f"Invalid negative indices found in visible_faces_list[{i}]")
+			if torch.any(faces >= num_faces):
+				print(f"Indices out of bounds in visible_faces_list[{i}]. Max valid index: {num_faces-1}")
+	
 	def generate_occluded_meshes(self):
 		if self.occ_mesh is not None:
 			return
@@ -480,7 +499,6 @@ class UVProjection():
 			raycast.prepare(image_height=size[1], image_width=size[0], c2w=c2w)
 			gen_depths = raycast.get_face_features(mesh_frame, max_hits=self.max_hits)
 			face_ids_list = gen_depths[:, 7].reshape(self.max_hits, -1)
-			# face_ids_list = [faces[faces != -1] for faces in face_ids_list]
 			face_ids_list = [np.unique(faces[faces != -1]) for faces in face_ids_list]
 			self.face_ids_list.extend(face_ids_list)
 			
@@ -498,7 +516,7 @@ class UVProjection():
 		# verts_tensor = torch.stack([self.mesh.verts_packed()] * len(self.cameras), dim=0)
 		# faces_tensor = torch.stack(visible_faces_list, dim=1)  # Shape: (num_meshes, num_total_faces, 3)
 		visible_faces_list = self.rearrange_camera_major_to_hit_major(visible_faces_list, len(self.cameras), self.max_hits)
-
+		# self.verify_face_indices(visible_faces_list)
 		
 		extended_vertices = [self.mesh.verts_packed()] * len(self.cameras) * self.max_hits
 		extended_texture = self.mesh.textures.extend(len(self.cameras) * self.max_hits)
@@ -801,7 +819,7 @@ class UVProjection():
 		optimizer = torch.optim.SGD(bake_maps, lr=1, momentum=0)
 		optimizer.zero_grad()
 		loss = 0
-		for i in range(len(self.cameras)):    
+		for i in range(len(self.cameras)):
 			bake_tex = TexturesUV([bake_maps[i]], tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
 			tmp_mesh.textures = bake_tex
 			images_predicted = self.renderer(tmp_mesh, cameras=self.cameras[i], lights=self.lights, device=self.device)
