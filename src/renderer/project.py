@@ -1,8 +1,10 @@
+import numpy as np
+from collections import defaultdict
+
 import torch
 import pytorch3d
 from trimesh.ray.ray_pyembree import RayMeshIntersector
-import trimesh
-from collections import defaultdict
+from trimesh import Trimesh
 
 
 from pytorch3d.io import load_objs_as_meshes, load_obj, save_obj, IO
@@ -26,99 +28,112 @@ from .geometry import HardGeometryShader
 from .shader import HardNChannelFlatShader
 from .voronoi import voronoi_solve
 
-import numpy as np
-
-
 # Copied from XRay
 class RaycastingImaging:
-    def __init__(self):
-        self.rays_screen_coords, self.rays_origins, self.rays_directions = None, None, None
+	def __init__(self):
+		self.rays_screen_coords, self.rays_origins, self.rays_directions = None, None, None
 
-    def __del__(self):
-        del self.rays_screen_coords
-        del self.rays_origins
-        del self.rays_directions
+	def __del__(self):
+		del self.rays_screen_coords
+		del self.rays_origins
+		del self.rays_directions
 
-    def prepare(self, image_height, image_width, intrinsics=None, c2w=None):
-        # scanning radius is determined from the mesh extent
-        self.rays_screen_coords, self.rays_origins, self.rays_directions = generate_rays((image_height, image_width), intrinsics, c2w)
+	def prepare(self, image_height, image_width, c2w=None):
+		# scanning radius is determined from the mesh extent
+		self.rays_screen_coords, self.rays_origins, self.rays_directions = generate_rays((image_height, image_width), c2w)
+	
+	def get_image(self, mesh, max_hits = 4):  #, features):
+		# get a point cloud with corresponding indexes
+		mesh_face_indexes, ray_indexes, points = ray_cast_mesh(mesh, self.rays_origins, self.rays_directions)
 
-    def get_image(self, mesh):  #, features):
-        # get a point cloud with corresponding indexes
-        mesh_face_indexes, ray_indexes, points = ray_cast_mesh(mesh, self.rays_origins, self.rays_directions)
+		ray_face_indexes = defaultdict(list)
+		for ray_index, ray_face_index in zip(ray_indexes, mesh_face_indexes):
+			ray_face_indexes[ray_index].append(ray_face_index)
+			
+		mesh_face_indices = [[] for _ in range(max_hits)]
+		for i in range(max_hits):
+			for ray_index, ray_face_index in ray_face_indexes.items():
+				if i < len(ray_face_index):
+					mesh_face_indices[i].append(ray_face_index[i])
 
-        # extract normals
-        normals = mesh.face_normals[mesh_face_indexes]
-        colors = mesh.visual.face_colors[mesh_face_indexes]
+		mesh_face_indices = [np.unique(indexes) for indexes in mesh_face_indices]
+		# print([mesh_face_indices[i].shape for i in range(max_hits)])
+		return ray_indexes, points, mesh_face_indices
 
-        mesh_face_indexes = np.unique(mesh_face_indexes)
-        mesh_vertex_indexes = np.unique(mesh.faces[mesh_face_indexes])
-        direction = self.rays_directions[ray_indexes][0]
-        return ray_indexes, points, normals, colors, direction, mesh_vertex_indexes, mesh_face_indexes
+		# assemble mesh fragment into a submesh
+		# nbhood = reindex_zerobased(mesh, mesh_vertex_indexes, mesh_face_indexes)
+		# return ray_indexes, points, normals, nbhood, mesh_vertex_indexes, mesh_face_indexes
 
-        # assemble mesh fragment into a submesh
-        # nbhood = reindex_zerobased(mesh, mesh_vertex_indexes, mesh_face_indexes)
-        # return ray_indexes, points, normals, nbhood, mesh_vertex_indexes, mesh_face_indexes
+def get_rays(directions, c2w, near = 1):
+	"""
+	Get ray origin and normalized directions in world coordinate for all pixels in one image.
+	Reference: https://www.scratchapixel.com/lessons/3d-basic-rendering/
+			   ray-tracing-generating-camera-rays/standard-coordinate-systems
 
-def get_rays(directions, c2w):
-    """
-    Get ray origin and normalized directions in world coordinate for all pixels in one image.
-    Reference: https://www.scratchapixel.com/lessons/3d-basic-rendering/
-               ray-tracing-generating-camera-rays/standard-coordinate-systems
+	Inputs:
+		directions: (H, W, 3) precomputed ray directions in camera coordinate
+		c2w: (3, 4) transformation matrix from camera coordinate to world coordinate
 
-    Inputs:
-        directions: (H, W, 3) precomputed ray directions in camera coordinate
-        c2w: (3, 4) transformation matrix from camera coordinate to world coordinate
+	Outputs:
+		rays_o: (H*W, 3), the origin of the rays in world coordinate
+		rays_d: (H*W, 3), the normalized direction of the rays in world coordinate
+	"""
+	# Rotate ray directions from camera coordinate to the world coordinate
+	rays_d = directions @ c2w[:3, :3].T # (H, W, 3)
+	rays_d = rays_d / (np.linalg.norm(rays_d, axis=-1, keepdims=True) + 1e-8)
+	# The origin of all rays is the camera origin in world coordinate
 
-    Outputs:
-        rays_o: (H*W, 3), the origin of the rays in world coordinate
-        rays_d: (H*W, 3), the normalized direction of the rays in world coordinate
-    """
-    # Rotate ray directions from camera coordinate to the world coordinate
-    rays_d = directions @ c2w[:3, :3].T # (H, W, 3)
-    rays_d = rays_d / (np.linalg.norm(rays_d, axis=-1, keepdims=True) + 1e-8)
-    # The origin of all rays is the camera origin in world coordinate
-    rays_o = np.broadcast_to(c2w[:3, 3], rays_d.shape) # (H, W, 3)
+	H, W, _ = directions.shape
+	# Generate a grid of pixel coordinates in camera space
+	# These represent the ray origins in orthographic projection
+	i, j = np.meshgrid(np.linspace(-1, 1, W), np.linspace(-1, 1, H))  # Normalized pixel grid
+	
+	# Assuming the camera is facing along the -z direction in camera space
+	# The z values are fixed (e.g., at 'near' distance from the camera plane)
+	pixel_positions_camera = np.stack([i, j, -np.ones_like(i) * near], axis=-1)  # (H, W, 3)
+	
+	# Transform pixel positions from camera space to world space using the c2w matrix
+	pixel_positions_world = pixel_positions_camera @ c2w[:3, :3].T + c2w[:3, 3]  # (H, W, 3)
+	
+	# The ray origins are the pixel positions in world space
+	rays_o = pixel_positions_world
 
-    return rays_o, rays_d
+	rays_o = pixel_positions_camera
 
-def generate_rays(image_resolution, intrinsics, c2w):
-    if isinstance(image_resolution, tuple):
-        assert len(image_resolution) == 2
-    else:
-        image_resolution = (image_resolution, image_resolution)
-    image_width, image_height = image_resolution
+	return rays_o, rays_d
 
-    # generate an array of screen coordinates for the rays
-    # (rays are placed at locations [i, j] in the image)
-    rays_screen_coords = np.mgrid[0:image_height, 0:image_width].reshape(
-        2, image_height * image_width).T  # [h, w, 2]
+def generate_rays(image_resolution, c2w):
+	if isinstance(image_resolution, tuple):
+		assert len(image_resolution) == 2
+	else:
+		image_resolution = (image_resolution, image_resolution)
+	image_width, image_height = image_resolution
 
-    fx = intrinsics[0, 0]
-    fy = intrinsics[1, 1]
-    cx = intrinsics[0, 2]
-    cy = intrinsics[1, 2]
+	# generate an array of screen coordinates for the rays
+	# (rays are placed at locations [i, j] in the image)
+	rays_screen_coords = np.mgrid[0:image_height, 0:image_width].reshape(
+		2, image_height * image_width).T  # [h, w, 2]
 
-    grid = rays_screen_coords.reshape(image_height, image_width, 2)
-    
-    i, j = grid[..., 1], grid[..., 0]
-    directions = np.stack([(i-cx)/fx, -(j-cy)/fy, -np.ones_like(i)], -1) # (H, W, 3)
+	grid = rays_screen_coords.reshape(image_height, image_width, 2)
+	
+	i, j = grid[..., 1], grid[..., 0]
+	directions = np.stack([np.zeros_like(i), np.zeros_like(i), np.ones_like(i)], -1) # (H, W, 3)
 
-    rays_origins, ray_directions = get_rays(directions, c2w)
-    rays_origins = rays_origins.reshape(-1, 3)
-    ray_directions = ray_directions.reshape(-1, 3)
-    
-    return rays_screen_coords, rays_origins, ray_directions
+	rays_origins, ray_directions = get_rays(directions, c2w)
+	rays_origins = rays_origins.reshape(-1, 3)
+	ray_directions = ray_directions.reshape(-1, 3)
+	
+	return rays_screen_coords, rays_origins, ray_directions
 
 
 def ray_cast_mesh(mesh, rays_origins, ray_directions):
-    intersector = RayMeshIntersector(mesh)
-    index_triangles, index_ray, point_cloud = intersector.intersects_id(
-        ray_origins=rays_origins,
-        ray_directions=ray_directions,
-        multiple_hits=True,
-        return_locations=True)
-    return index_triangles, index_ray, point_cloud
+	intersector = RayMeshIntersector(mesh)
+	index_triangles, index_ray, point_cloud = intersector.intersects_id(
+		ray_origins=rays_origins,
+		ray_directions=ray_directions,
+		multiple_hits=True,
+		return_locations=True)
+	return index_triangles, index_ray, point_cloud
 
 # Pytorch3D based renderering functions, managed in a class
 # Render size is recommended to be the same as your latent view size
@@ -126,13 +141,16 @@ def ray_cast_mesh(mesh, rays_origins, ray_directions):
 # Stable Diffusion has 4 latent channels so use channels=4
 
 class UVProjection():
-	def __init__(self, texture_size=96, render_size=64, sampling_mode="nearest", channels=3, device=None):
+	def __init__(self, texture_size=96, render_size=64, sampling_mode="nearest", channels=3, device=None, max_hits = 2):
 		self.channels = channels
 		self.device = device or torch.device("cpu")
 		self.lights = AmbientLights(ambient_color=((1.0,)*channels,), device=self.device)
 		self.target_size = (texture_size,texture_size)
 		self.render_size = render_size
 		self.sampling_mode = sampling_mode
+
+		self.max_hits = max_hits
+		self.occ_mesh = None
 
 
 	# Load obj mesh, rescale the mesh to fit into the bounding box
@@ -272,12 +290,12 @@ class UVProjection():
 		new_map = texture.permute(1, 2, 0)
 		new_map = new_map.to(self.device)
 		new_tex = TexturesUV(
-			[new_map], 
-			self.mesh.textures.faces_uvs_padded(), 
-			self.mesh.textures.verts_uvs_padded(), 
+			[new_map] * len(self.occ_mesh), 
+			self.visible_texture_map_list,
+			self.occ_mesh.textures.verts_uvs_padded(), 
 			sampling_mode=self.sampling_mode
 			)
-		self.mesh.textures = new_tex
+		self.occ_mesh.textures = new_tex
 
 
 	# Set the initial normal noise texture
@@ -328,7 +346,7 @@ class UVProjection():
 			blur_radius=blur, 
 			faces_per_pixel=face_per_pix,
 			perspective_correct=perspective_correct,
-			cull_backfaces=True,
+			cull_backfaces=False,
 			max_faces_per_bin=30000,
 		)
 
@@ -356,15 +374,15 @@ class UVProjection():
 			channels = self.channels
 		cos_maps = []
 		tmp_mesh = self.mesh.clone()
-		for i in range(len(self.cameras)):
+		for i, mesh in enumerate(self.occ_mesh):
 			
 			zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
 			optimizer = torch.optim.SGD([zero_map], lr=1, momentum=0)
 			optimizer.zero_grad()
-			zero_tex = TexturesUV([zero_map], self.mesh.textures.faces_uvs_padded(), self.mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
-			tmp_mesh.textures = zero_tex
+			zero_tex = TexturesUV([zero_map], mesh.textures.faces_uvs_padded(), mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+			mesh.textures = zero_tex
 
-			images_predicted = self.renderer(tmp_mesh, cameras=self.cameras[i], lights=self.lights)
+			images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights)
 
 			loss = torch.sum((cos_angles[i,:,:,0:1]**1 - images_predicted)**2)
 			loss.backward()
@@ -378,7 +396,54 @@ class UVProjection():
 			cos_maps.append(zero_map)
 		self.cos_maps = cos_maps
 
+	def generate_occluded_geometry(self):
+		if self.occ_mesh is not None:
+			return
 		
+		vertices = self.mesh.verts_packed().cpu().numpy()  # (V, 3) shape, move to CPU and convert to numpy
+		faces = self.mesh.faces_packed().cpu().numpy()  # (F, 3) shape, move to CPU and convert to numpy
+
+		raycast = RaycastingImaging()
+
+		visible_faces_list = []
+		self.visible_texture_map_list = []
+		self.mesh_face_indices_list = []
+		
+		for k, camera in enumerate(self.cameras):
+			R = camera.R.cpu().numpy()
+			T = camera.T.cpu().numpy()
+
+			Rt = np.eye(4)  # Start with an identity matrix
+			Rt[:3, :3] = np.swapaxes(R, 1, 2)  # Top-left 3x3 is the transposed rotation
+			Rt[:3, 3] = T   # Top-right 3x1 is the inverted translation
+
+			mesh_frame = Trimesh(vertices=vertices, faces=faces).apply_transform(Rt)
+			# mesh_frame.export(str(k)+"trans.ply")
+
+			c2w = np.eye(4).astype(np.float32)[:3]
+			raycast.prepare(image_height=512, image_width=512, c2w=c2w)
+			ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits)   
+			
+			for i in range(self.max_hits):
+				# mesh_face_indexes = np.hstack([mesh_face_indices[i], np.array([mesh_face_indices[i][-1] for _ in range(faces.shape[0] - mesh_face_indices[i].shape[0])])])
+				visible_faces = faces[mesh_face_indices[i]]  # Only keep the visible faces
+				self.mesh_face_indices_list.append(torch.tensor(mesh_face_indices[i], dtype=torch.int64, device='cuda'))
+				# Trimesh(vertices=vertices, faces=visible_faces).export(str(k)+"trans"+str(i)+".ply")
+				visible_faces = torch.tensor(visible_faces, dtype=torch.int64, device='cuda')
+
+				visible_faces_list.append(visible_faces)
+				new_map = torch.zeros(self.target_size+(self.channels,), device=self.device)
+				self.visible_texture_map_list.append(self.mesh.textures.faces_uvs_padded()[0, mesh_face_indices[i]])
+		
+		textures = TexturesUV(
+			[new_map] * len(self.cameras) * self.max_hits, 
+			self.visible_texture_map_list, 
+			[self.mesh.textures.verts_uvs_padded()[0]] * len(self.cameras) * self.max_hits, 
+			sampling_mode=self.sampling_mode
+		)
+		self.occ_mesh = Meshes(verts = [self.mesh.verts_packed()] * len(self.cameras) * self.max_hits, faces = visible_faces_list, textures = textures)
+		self.occ_cameras = FoVOrthographicCameras(device=self.device, R=self.cameras.R.repeat_interleave(self.max_hits, 0), T=self.cameras.T.repeat_interleave(self.max_hits, 0), scale_xyz=self.cameras.scale_xyz.repeat_interleave(self.max_hits, 0))
+
 	# Get geometric info from fragment shader
 	# Can be used for generating conditioning image and cosine weights
 	# Returns some information you may not need, remember to release them for memory saving
@@ -390,75 +455,10 @@ class UVProjection():
 		shader = self.renderer.shader
 		self.renderer.shader = HardGeometryShader(device=self.device, cameras=self.cameras[0], lights=self.lights)
 		tmp_mesh = self.mesh.clone()
-
-		# raycast = RaycastingImaging()
 		
-		# for camera in (self.cameras):
-		# 	# c2w = np.array(frame["c2w"])
-		# 	# mesh.export("gt.ply")
-		# 	# Rt = np.linalg.inv(c2w)
-
-		# 	# is this right?
-		# 	Rt = np.matmul(np.array(camera.R), np.array(camera.T))
-		# 	invRt = np.linalg.inv(Rt)
-
-		# 	vertices = tmp_mesh.verts_packed().cpu().numpy()  # (V, 3) shape, move to CPU and convert to numpy
-		# 	faces = tmp_mesh.faces_packed().cpu().numpy()  # (F, 3) shape, move to CPU and convert to numpy
-
-		# 	mesh_frame = trimesh.Trimesh(vertices=vertices, faces=faces).apply_transform(Rt)
-			
-		# 	# mesh_frame.export("trans.ply")
-		# 	c2w = np.eye(4).astype(np.float32)[:3]
-
-		# 	camera_angle_x = camera.fov
-		# 	focal_length = 0.5 * size[0] / np.tan(0.5 * camera_angle_x)
-
-		# 	cx = size[0] / 2.0
-		# 	cy = size[1] / 2.0
-
-		# 	intrinsics = np.array([[focal_length, 0, cx],
-		# 						[0, focal_length, cy],
-		# 						[0, 0, 1]])
-			
-		# 	raycast.prepare(image_height=size[1], image_width=size[0], intrinsics=intrinsics, c2w=c2w)
-			
-		# 	ray_indexes, points, normals, colors, direction, mesh_vertex_indexes, mesh_face_indexes = raycast.get_image(mesh_frame)   
-			
-		# 	# normalize normals
-		# 	normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
-		# 	colors = colors[:, :3] / 255.0
-
-		# 	# collect points and normals for each ray
-		# 	ray_points = defaultdict(list)
-		# 	ray_normals = defaultdict(list)
-		# 	ray_colors = defaultdict(list)
-		# 	for ray_index, point, normal, color in zip(ray_indexes, points, normals, colors):
-		# 		ray_points[ray_index].append(point)
-		# 		ray_normals[ray_index].append(normal)
-		# 		ray_colors[ray_index].append(color)
-
-		# 	# ray to image
-		# 	max_hits = 4
-		# 	GenDepths = np.zeros((max_hits, 1+3+3, size[0], size[1]), dtype=np.float32)
-
-		# 	for i in range(max_hits):
-		# 		for ray_index, ray_point in ray_points.items():
-		# 			if i < len(ray_point):
-		# 				u = ray_index // size[1]
-		# 				v = ray_index % size[1]
-		# 				np.linalg.norm(ray_point[i] - c2w[:, 3])
-		# 				np.linalg.norm(ray_normals[ray_index][i])
-		# 				cos_angle = np.clip(np.dot(np.linalg.norm(ray_point[i] - c2w[:, 3]), np.linalg.norm(ray_normals[ray_index][i])), 0, 1)
-
-		# 				GenDepths[i, 0:3, u, v] = np.dot(invRt, np.append(ray_point[i] - c2w[:, 3], 1))[:3]
-		# 				GenDepths[i, 3:6, u, v] = np.dot(invRt, np.append(ray_normals[ray_index][i], 0))[:3]
-		# 				GenDepths[i, 6, u, v] = np.linalg.norm(ray_point[i] - c2w[:, 3])
-		# 				GenDepths[i, 7, u, v] = cos_angle
-		# 				# GenDepths[i, 4:7, u, v] = ray_colors[ray_index][i]
+		self.generate_occluded_geometry()
 		
-		# TODO: Implement XRay, How do I get fXXXing cos_angles?
-		# 09/04 : I guess depth and cos_angle would be needed
-		verts, normals, depths, cos_angles, texels, fragments = self.renderer(tmp_mesh.extend(len(self.cameras)), cameras=self.cameras, lights=self.lights)
+		verts, normals, depths, cos_angles, texels, fragments = self.renderer(self.occ_mesh, cameras=self.occ_cameras, lights=self.lights)
 		self.renderer.shader = shader
 
 		if image_size:
@@ -469,13 +469,13 @@ class UVProjection():
 
 	# Project world normal to view space and normalize
 	@torch.no_grad()
-	def decode_view_normal(self, normals):
-		w2v_mat = self.cameras.get_full_projection_transform()
+	def decode_view_normal(self, normals, flip_normals = True):
+		w2v_mat = self.occ_cameras.get_full_projection_transform()
 		normals_view = torch.clone(normals)[:,:,:,0:3]
 		normals_view = normals_view.reshape(normals_view.shape[0], -1, 3)
 		normals_view = w2v_mat.transform_normals(normals_view)
 		normals_view = normals_view.reshape(normals.shape[0:3]+(3,))
-		normals_view[:,:,:,2] *= -1
+		normals_view[:,:,:,2] = torch.where(normals_view[:,:,:,2] > 0, normals_view[:,:,:,2], - normals_view[:,:,:,2])
 		normals = (normals_view[...,0:3]+1) * normals[...,3:] / 2 + torch.FloatTensor(((((0.5,0.5,1))))).to(self.device) * (1 - normals[...,3:])
 		# normals = torch.cat([normal for normal in normals], dim=1)
 		normals = normals.clamp(0, 1)
@@ -513,13 +513,14 @@ class UVProjection():
 			channels = self.channels
 		tmp_mesh = self.mesh.clone()
 		gradient_maps = []
-		for i in range(len(self.cameras)):
+		self.generate_occluded_geometry()
+		for i, mesh in enumerate(self.occ_mesh):
 			zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
 			optimizer = torch.optim.SGD([zero_map], lr=1, momentum=0)
 			optimizer.zero_grad()
-			zero_tex = TexturesUV([zero_map], self.mesh.textures.faces_uvs_padded(), self.mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
-			tmp_mesh.textures = zero_tex
-			images_predicted = self.renderer(tmp_mesh, cameras=self.cameras[i], lights=self.lights)
+			zero_tex = TexturesUV([zero_map], mesh.textures.faces_uvs_padded(), mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+			mesh.textures = zero_tex
+			images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights)
 			loss = torch.sum((1 - images_predicted)**2)
 			loss.backward()
 			optimizer.step()
@@ -537,9 +538,17 @@ class UVProjection():
 			channels = self.channels
 
 		pix2face_list = []
-		for i in range(len(self.cameras)):
+		for i in range(len(self.occ_cameras)):
 			self.renderer.rasterizer.raster_settings.image_size=image_size
-			pix2face = self.renderer.rasterizer(self.mesh_d, cameras=self.cameras[i]).pix_to_face
+			pix2face = self.renderer.rasterizer(self.occ_mesh[i], cameras=self.occ_cameras[i]).pix_to_face
+			
+			indices = pix2face[:,:,:,0].long().squeeze()
+			valid_mask = (indices != -1)
+			output_faces = torch.full_like(indices, -1)
+			valid_indices = indices[valid_mask]
+			output_faces[valid_mask] = self.mesh_face_indices_list[i][valid_indices]
+			pix2face = torch.where(pix2face[:, :, :, 0] == -1, -1, output_faces)
+
 			self.renderer.rasterizer.raster_settings.image_size=self.render_size
 			pix2face_list.append(pix2face)
 
@@ -582,11 +591,9 @@ class UVProjection():
 		self.visible_triangles = visible_triangles
 
 
-
 	# Render the current mesh and texture from current cameras
 	def render_textured_views(self):
-		meshes = self.mesh.extend(len(self.cameras))
-		images_predicted = self.renderer(meshes, cameras=self.cameras, lights=self.lights)
+		images_predicted = self.renderer(self.occ_mesh, cameras=self.occ_cameras, lights=self.lights)
 
 		return [image.permute(2, 0, 1) for image in images_predicted]
 
@@ -595,22 +602,27 @@ class UVProjection():
 	# First bake into individual textures then combine based on cosine weight
 	@torch.enable_grad()
 	def bake_texture(self, views=None, main_views=[], cos_weighted=True, channels=None, exp=None, noisy=False, generator=None):
-		# TODO: Implement texture baking w/ occluded region
 		if not exp:
 			exp=1
 		if not channels:
 			channels = self.channels
 		views = [view.permute(1, 2, 0) for view in views]
 
-		tmp_mesh = self.mesh
 		bake_maps = [torch.zeros(self.target_size+(views[0].shape[2],), device=self.device, requires_grad=True) for view in views]
 		optimizer = torch.optim.SGD(bake_maps, lr=1, momentum=0)
 		optimizer.zero_grad()
 		loss = 0
-		for i in range(len(self.cameras)):    
-			bake_tex = TexturesUV([bake_maps[i]], tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
-			tmp_mesh.textures = bake_tex
-			images_predicted = self.renderer(tmp_mesh, cameras=self.cameras[i], lights=self.lights, device=self.device)
+
+		new_tex = TexturesUV(
+			bake_maps, 
+			self.visible_texture_map_list,
+			self.occ_mesh.textures.verts_uvs_padded(), 
+			sampling_mode=self.sampling_mode
+			)
+		self.occ_mesh.textures = new_tex
+
+		for i, mesh in enumerate(self.occ_mesh):
+			images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights, device=self.device)
 			predicted_rgb = images_predicted[..., :-1]
 			loss += (((predicted_rgb[...] - views[i]))**2).sum()
 		loss.backward(retain_graph=False)
@@ -630,10 +642,16 @@ class UVProjection():
 		baked /= total_weights + 1E-8
 		baked = voronoi_solve(baked, total_weights[...,0])
 
-		bake_tex = TexturesUV([baked], tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
-		tmp_mesh.textures = bake_tex
-		extended_mesh = tmp_mesh.extend(len(self.cameras))
-		images_predicted = self.renderer(extended_mesh, cameras=self.cameras, lights=self.lights)
+		new_map = baked.to(self.device)
+		new_tex = TexturesUV(
+			[new_map] * len(self.occ_mesh), 
+			self.visible_texture_map_list,
+			self.occ_mesh.textures.verts_uvs_padded(), 
+			sampling_mode=self.sampling_mode
+			)
+		self.occ_mesh.textures = new_tex
+
+		images_predicted = self.renderer(self.occ_mesh, cameras=self.occ_cameras, lights=self.lights)
 		learned_views = [image.permute(2, 0, 1) for image in images_predicted]
 
 		return learned_views, baked.permute(2, 0, 1), total_weights.permute(2, 0, 1)
