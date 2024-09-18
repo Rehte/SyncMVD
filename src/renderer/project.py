@@ -1,3 +1,6 @@
+import numpy as np
+from collections import defaultdict
+
 import torch
 import pytorch3d
 from trimesh.ray.ray_pyembree import RayMeshIntersector
@@ -24,9 +27,6 @@ from pytorch3d.renderer import (
 from .geometry import HardGeometryShader
 from .shader import HardNChannelFlatShader
 from .voronoi import voronoi_solve
-
-import numpy as np
-from collections import defaultdict
 
 # Copied from XRay
 class RaycastingImaging:
@@ -591,7 +591,6 @@ class UVProjection():
 		self.visible_triangles = visible_triangles
 
 
-
 	# Render the current mesh and texture from current cameras
 	def render_textured_views(self):
 		images_predicted = self.renderer(self.occ_mesh, cameras=self.occ_cameras, lights=self.lights)
@@ -603,7 +602,6 @@ class UVProjection():
 	# First bake into individual textures then combine based on cosine weight
 	@torch.enable_grad()
 	def bake_texture(self, views=None, main_views=[], cos_weighted=True, channels=None, exp=None, noisy=False, generator=None):
-		# TODO: Implement texture baking w/ occluded region
 		if not exp:
 			exp=1
 		if not channels:
