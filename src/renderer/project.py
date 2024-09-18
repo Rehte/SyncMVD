@@ -519,7 +519,8 @@ class UVProjection():
 
 		self.face_ids_list = []
 		
-		for camera in tqdm(self.cameras, desc="Processing Hit Planes for Each Camera"):
+		for i in tqdm(range(int(len(self.cameras)/self.max_hits)), desc="Processing Hit Planes for Each Camera"):
+			camera = self.cameras[i]
 			R = camera.R.cpu().numpy()
 			T = camera.T.cpu().numpy()
 
@@ -549,14 +550,15 @@ class UVProjection():
 
 		# verts_tensor = torch.stack([self.mesh.verts_packed()] * len(self.cameras), dim=0)
 		# faces_tensor = torch.stack(visible_faces_list, dim=1)  # Shape: (num_meshes, num_total_faces, 3)
-		visible_faces_list = self.rearrange_camera_major_to_hit_major(visible_faces_list, len(self.cameras), self.max_hits)
+		num_cameras = int(len(self.cameras) / self.max_hits)
+		visible_faces_list = self.rearrange_camera_major_to_hit_major(visible_faces_list, num_cameras, self.max_hits)
 		self.verify_face_indices(visible_faces_list)
 		
-		extended_vertices = [self.mesh.verts_packed()] * len(self.cameras) * self.max_hits
-		extended_texture = self.mesh.textures.extend(len(self.cameras) * self.max_hits)
+		extended_vertices = [self.mesh.verts_packed()] * len(self.cameras)
+		extended_texture = self.mesh.textures.extend(len(self.cameras))
 		self.occ_mesh = Meshes(verts = extended_vertices, faces = visible_faces_list, textures = extended_texture)
 
-		self.face_ids_list = self.rearrange_camera_major_to_hit_major(self.face_ids_list, len(self.cameras), self.max_hits)
+		self.face_ids_list = self.rearrange_camera_major_to_hit_major(self.face_ids_list, num_cameras, self.max_hits)
 
 	def generate_occluded_geometry(self):
 		if self.occ_mesh is not None:
