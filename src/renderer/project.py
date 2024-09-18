@@ -1,6 +1,7 @@
 import numpy as np
 from collections import defaultdict
 
+from tqdm import tqdm
 import torch
 import pytorch3d
 from trimesh.ray.ray_pyembree import RayMeshIntersector
@@ -74,11 +75,11 @@ class RaycastingImaging:
 		GenDepths[:, 7, :, :] = -1 # set face index to -1 by default
 
 		hits_per_ray = defaultdict(list)
-		for idx, ray_idx in enumerate(index_ray):
+		for idx, ray_idx in tqdm(enumerate(index_ray), desc="Appending Hit Information"):
 			hits_per_ray[ray_idx].append((points[idx], normals[idx], colors[idx], index_triangles[idx]))
 
         # Populate the hit images
-		for i in range(max_hits):
+		for i in tqdm(range(max_hits), desc="Processing Rays"):
 			for ray_idx in range(self.image_height * self.image_width):
 				if i < len(hits_per_ray[ray_idx]):
 					u, v = divmod(ray_idx, self.image_width)
@@ -417,9 +418,41 @@ class UVProjection():
 		if not channels:
 			channels = self.channels
 		cos_maps = []
+
+		tmp_mesh = self.occ_mesh.clone()
+		zero_map = torch.zeros(self.target_size + (channels,), device=self.device, requires_grad=True)
+		zero_maps = [
+			torch.zeros(self.target_size + (channels,), device=self.device, requires_grad=True)
+			for _ in range(len(self.occ_mesh))
+		]
+		zero_tex = TexturesUV(zero_maps, tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+		tmp_mesh.textures = zero_tex
+
+		optimizer = torch.optim.SGD(zero_maps, lr=1, momentum=0)
+		optimizer.zero_grad()
+
+		images_predicted = self.renderer(tmp_mesh, cameras=self.cameras, lights=self.lights)
+
+		loss = torch.sum((cos_angles[...,0:1]**1 - images_predicted)**2)
+		loss.backward()
+		optimizer.step()
+
+		# Step 10: Post-process zero_maps as per existing logic
+		for i, zero_map in enumerate(zero_maps):
+			if fill:
+				zero_map = zero_map.detach() / (self.occ_gradient_maps[i] + 1E-8)
+				zero_map = voronoi_solve(zero_map, self.occ_gradient_maps[i][..., 0])
+			else:
+				zero_map = zero_map.detach() / (self.occ_gradient_maps[i] + 1E-8)
+			cos_maps.append(zero_map)
+		self.cos_maps = cos_maps
+
+		return
+
 		tmp_mesh = self.mesh.clone()
 		for i in range(len(self.occ_mesh)):
 			print(f"i: {i}")
+			# self.verify_face_indices([self.occ_mesh[i].faces_packed()])
 			tmp_mesh = self.occ_mesh[i].clone()
 			# tmp_mesh = tmp_mesh.clone()
 			zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
@@ -469,6 +502,7 @@ class UVProjection():
 				print(f"Invalid negative indices found in visible_faces_list[{i}]")
 			if torch.any(faces >= num_faces):
 				print(f"Indices out of bounds in visible_faces_list[{i}]. Max valid index: {num_faces-1}")
+		print(f"Face indices verified for {len(visible_faces_list)} lists")
 	
 	def generate_occluded_meshes(self):
 		if self.occ_mesh is not None:
@@ -485,7 +519,7 @@ class UVProjection():
 
 		self.face_ids_list = []
 		
-		for camera in self.cameras:
+		for camera in tqdm(self.cameras, desc="Processing Hit Planes for Each Camera"):
 			R = camera.R.cpu().numpy()
 			T = camera.T.cpu().numpy()
 
@@ -516,7 +550,7 @@ class UVProjection():
 		# verts_tensor = torch.stack([self.mesh.verts_packed()] * len(self.cameras), dim=0)
 		# faces_tensor = torch.stack(visible_faces_list, dim=1)  # Shape: (num_meshes, num_total_faces, 3)
 		visible_faces_list = self.rearrange_camera_major_to_hit_major(visible_faces_list, len(self.cameras), self.max_hits)
-		# self.verify_face_indices(visible_faces_list)
+		self.verify_face_indices(visible_faces_list)
 		
 		extended_vertices = [self.mesh.verts_packed()] * len(self.cameras) * self.max_hits
 		extended_texture = self.mesh.textures.extend(len(self.cameras) * self.max_hits)
@@ -636,6 +670,24 @@ class UVProjection():
 		if not channels:
 			channels = self.channels
 		tmp_mesh = self.mesh.clone()
+		tmp_mesh = self.mesh.clone()
+		gradient_maps = []
+		for i in range(len(self.cameras)):
+			zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
+			optimizer = torch.optim.SGD([zero_map], lr=1, momentum=0)
+			optimizer.zero_grad()
+			zero_tex = TexturesUV([zero_map], self.mesh.textures.faces_uvs_padded(), self.mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+			tmp_mesh.textures = zero_tex
+			images_predicted = self.renderer(tmp_mesh, cameras=self.cameras[i], lights=self.lights)
+			loss = torch.sum((1 - images_predicted)**2)
+			loss.backward()
+			optimizer.step()
+
+			gradient_maps.append(zero_map.detach())
+
+		self.occ_gradient_maps = gradient_maps
+		return
+
 		gradient_maps = []
 		for i in range(len(self.cameras)):
 			zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
@@ -653,6 +705,24 @@ class UVProjection():
 		self.gradient_maps = gradient_maps
 
 		occ_gradient_maps = []
+		tmp_mesh = self.occ_mesh.clone()
+		zero_map = torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
+		zero_maps = [
+			torch.zeros(self.target_size+(channels,), device=self.device, requires_grad=True)
+			for _ in range(len(self.occ_mesh))
+		]
+		optimizer = torch.optim.SGD(zero_maps, lr=1, momentum=0)
+		optimizer.zero_grad()
+		zero_tex = TexturesUV(zero_maps, tmp_mesh.textures.faces_uvs_padded(), tmp_mesh.textures.verts_uvs_padded(), sampling_mode=self.sampling_mode)
+		tmp_mesh.textures = zero_tex
+		images_predicted = self.renderer(tmp_mesh, cameras=self.cameras, lights=self.lights)
+		loss = torch.sum((1 - images_predicted)**2)
+		loss.backward()
+		optimizer.step()
+
+		self.occ_gradient_maps = [zero_map.detach() for zero_map in zero_maps]
+		return
+
 		for i in range(len(self.occ_mesh)):
 			tmp_mesh = self.occ_mesh[i].clone()
 			camera = self.cameras[i % len(self.cameras)]
