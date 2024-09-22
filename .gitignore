@@ -5,3 +5,4 @@
 /data/MVD*/
 /data/*/*
 .vscode
+/output/**
