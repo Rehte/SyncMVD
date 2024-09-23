@@ -21,7 +21,9 @@ def main():
             continue
         
         # Construct the command with max_hits
-        command = f"python run_experiment.py --config {config_path} --max_hits {max_hits} --style_prompt {style_prompt}"
+        command = f"python run_experiment.py --config {config_path} --max_hits {max_hits}"
+        if style_prompt is not None:
+            command += f" --style_prompt \"{style_prompt}\""
         
         # Run the command
         subprocess.run(command, shell=True)
