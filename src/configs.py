@@ -27,6 +27,7 @@ def parse_config():
     parser.add_argument('--control_guidance_start', type=float, default=0.0)
     parser.add_argument('--control_guidance_end', type=float, default=0.99)
     parser.add_argument('--guidance_rescale', type=float, default=0.0, help='Not tested')
+    parser.add_argument('--style_prompt', type=str, help="Style description for the mesh which will be appended to the prompt at the end", default=None)
     # Multi-View Config
     parser.add_argument('--latent_view_size', type=int, default=96, help='Larger resolution, less aliasing in latent images; quality may degrade if much larger trained resolution of networks')
     parser.add_argument('--latent_tex_size', type=int, default=512, help='Originally 1536 in paper, use lower resolution save VRAM')

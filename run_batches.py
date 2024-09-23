@@ -5,6 +5,7 @@ import os
 from tqdm import tqdm
 
 max_hits = 2
+style_prompt = "christmas style"
 
 def main():
     # Read the CSV and extract the list of uids
@@ -20,7 +21,7 @@ def main():
             continue
         
         # Construct the command with max_hits
-        command = f"python run_experiment.py --config {config_path} --max_hits {max_hits}"
+        command = f"python run_experiment.py --config {config_path} --max_hits {max_hits} --style_prompt {style_prompt}"
         
         # Run the command
         subprocess.run(command, shell=True)

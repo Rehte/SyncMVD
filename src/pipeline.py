@@ -344,6 +344,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		logging_config=None,
 		cond_type="depth",
         max_hits=2,
+        style_prompt=None,
 	):
 		
 
@@ -394,6 +395,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		height = height or self.unet.config.sample_size * self.vae_scale_factor
 		width = width or self.unet.config.sample_size * self.vae_scale_factor
 
+		if style_prompt is not None:
+			prompt = f"{prompt}, {style_prompt}"
 
 		# 1. Check inputs. Raise error if not correct
 		self.check_inputs(
