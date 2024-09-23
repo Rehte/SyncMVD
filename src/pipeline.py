@@ -154,7 +154,6 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		safety_checker: StableDiffusionSafetyChecker,
 		feature_extractor: CLIPImageProcessor,
 		requires_safety_checker: bool = False,
-		max_hits: int = 2,
 	):
 		super().__init__(
 			vae, text_encoder, tokenizer, unet, 
@@ -167,7 +166,6 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		self.enable_model_cpu_offload()
 		self.enable_vae_slicing()
 		self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
-		self.max_hits = max_hits
 
 	
 	def initialize_pipeline(
@@ -186,9 +184,12 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 			max_batch_size=4,
 			logging_config=None,
+            max_hits=2,
 		):
 		# Make output dir
 		output_dir = logging_config["output_dir"]
+  
+		self.max_hits = max_hits
 
 		self.result_dir = f"{output_dir}/results"
 		self.intermediate_dir = f"{output_dir}/intermediate"
@@ -342,6 +343,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 		logging_config=None,
 		cond_type="depth",
+        max_hits=2,
+        style_prompt=None,
 	):
 		
 
@@ -361,7 +364,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 				max_batch_size=max_batch_size,
 
-				logging_config=logging_config
+				logging_config=logging_config,
+                max_hits=max_hits,
 			)
 
 
@@ -391,6 +395,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 		height = height or self.unet.config.sample_size * self.vae_scale_factor
 		width = width or self.unet.config.sample_size * self.vae_scale_factor
 
+		if style_prompt is not None:
+			prompt = f"{prompt}, {style_prompt}"
 
 		# 1. Check inputs. Raise error if not correct
 		self.check_inputs(
