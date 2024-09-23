@@ -106,8 +106,7 @@ result_tex_rgb, textured_views, v = syncmvd(
 
 	logging_config=logging_config,
 	cond_type=opt.cond_type,
-	
-	
-	)
+    max_hits=opt.max_hits,
+)
 
 display(v)
