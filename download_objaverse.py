@@ -5,6 +5,7 @@ import json
 import multiprocessing
 import os
 import pandas as pd
+import yaml
 
 import urllib.request
 import warnings
@@ -14,7 +15,7 @@ import trimesh
 
 
 BASE_PATH = os.path.join("./assets/objaverse")
-BASE_PATH = os.path.join("./data")
+BASE_PATH = os.path.join("./objaverse")
 os.makedirs(BASE_PATH, exist_ok=True)
 
 __version__ = "<REPLACE_WITH_VERSION>"
@@ -138,7 +139,8 @@ def _download_object(
     os.makedirs(os.path.dirname(tmp_local_path), exist_ok=True)
     urllib.request.urlretrieve(hf_url, tmp_local_path)
     
-    if os.path.exists(tmp_local_path):
+    if not os.path.exists(tmp_local_path):
+        print(f"Mesh Download Failed: {uid}")
         return uid, None
 
     os.rename(tmp_local_path, local_path)
@@ -201,7 +203,7 @@ def load_objects(uids: List[str], download_processes: int = 1) -> Dict[str, str]
             if uid.endswith(".glb"):
                 uid = uid[:-4]
             if uid not in object_paths:
-                warnings.warn("Could not find object with uid. Skipping it.")
+                warnings.warn(f"Could not find object with uid. Skipping it.: {uid}")
                 continue
             object_path = object_paths[uid]
             local_path = os.path.join(_VERSIONED_PATH, object_path)
@@ -250,15 +252,39 @@ if __name__ == '__main__':
     df = pd.read_csv('Objects.csv')
     uid_to_name = dict(zip(df['uid'], df['name']))
     uid_list = df['uid'].tolist()
+    uid_to_description = dict(zip(df['uid'], df['description']))
 
     obj_dict = load_objects(uid_list, download_processes=10)
+    
+    config_data = {
+        'mesh': "./model.obj",
+        'mesh_config_relative': True,
+        'use_mesh_name': False,
+        'prompt': f"Photo of ",  
+        'steps': 30,
+        'cond_type': "depth",
+        'seed': 2,
+        'log_interval': 10,
+        'mesh_scale': 1,
+        'tex_fast_preview': True,
+        'view_fast_preview': True
+    }
     
     mesh_path_list = glob.glob(os.path.join(_VERSIONED_PATH, "glbs", "*", "*.glb"))
     convert_success = 0
     for mesh_path in tqdm(mesh_path_list, desc="Converting glb to obj"):
         uid = mesh_path.split("/")[-1].split(".")[0]
         mesh_name = uid_to_name.get(uid, 'UID not found').replace(' ', '_')
+        
+        description = uid_to_description.get(uid, 'Description not found')
+        config_data['prompt'] = f"Photo of a {description}"
+        config_data['mesh_name'] = mesh_name
+        
+        mesh_name = uid # Set the directory name as uid
         os.makedirs(f"{BASE_PATH}/{mesh_name}", exist_ok=True)
+        config_path = f"{BASE_PATH}/{mesh_name}/config.yaml"
+        with open(config_path, 'w') as yaml_file:
+            yaml.dump(config_data, yaml_file, default_flow_style=False)
         os.system(f"mv {mesh_path} {BASE_PATH}/{mesh_name}/model.glb")
         print(mesh_name)
         convert_success += glb2obj(f"{BASE_PATH}/{mesh_name}/model.glb", f"{BASE_PATH}/{mesh_name}/model.obj")
