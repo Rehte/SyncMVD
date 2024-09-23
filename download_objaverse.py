@@ -14,6 +14,7 @@ import trimesh
 
 
 BASE_PATH = os.path.join("./assets/objaverse")
+BASE_PATH = os.path.join("./data")
 os.makedirs(BASE_PATH, exist_ok=True)
 
 __version__ = "<REPLACE_WITH_VERSION>"
@@ -136,6 +137,9 @@ def _download_object(
     # wget the file and put it in local_path
     os.makedirs(os.path.dirname(tmp_local_path), exist_ok=True)
     urllib.request.urlretrieve(hf_url, tmp_local_path)
+    
+    if os.path.exists(tmp_local_path):
+        return uid, None
 
     os.rename(tmp_local_path, local_path)
 
@@ -189,7 +193,8 @@ def load_objects(uids: List[str], download_processes: int = 1) -> Dict[str, str]
             uid, local_path = _download_object(
                 uid, object_path, len(uids_to_download), start_file_count
             )
-            out[uid] = local_path
+            if local_path is not None:
+                out[uid] = local_path
     else:
         args = []
         for uid in uids:
@@ -216,7 +221,8 @@ def load_objects(uids: List[str], download_processes: int = 1) -> Dict[str, str]
         with multiprocessing.Pool(download_processes) as pool:
             r = pool.starmap(_download_object, args)
             for uid, local_path in r:
-                out[uid] = local_path
+                if local_path is not None:
+                    out[uid] = local_path
     return out
 
 
@@ -251,7 +257,7 @@ if __name__ == '__main__':
     convert_success = 0
     for mesh_path in tqdm(mesh_path_list, desc="Converting glb to obj"):
         uid = mesh_path.split("/")[-1].split(".")[0]
-        mesh_name = uid_to_name.get(uid, 'UID not found')
+        mesh_name = uid_to_name.get(uid, 'UID not found').replace(' ', '_')
         os.makedirs(f"{BASE_PATH}/{mesh_name}", exist_ok=True)
         os.system(f"mv {mesh_path} {BASE_PATH}/{mesh_name}/model.glb")
         print(mesh_name)
