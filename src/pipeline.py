@@ -801,8 +801,21 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
 		self.uvp_rgb.set_texture_map(result_tex_rgb)
 		textured_views = self.uvp_rgb.render_textured_views()
+		textured_views_save_path = f"{self.result_dir}/textured_views"
+		os.makedirs(textured_views_save_path, exist_ok=True)
+		textured_views_fix = [textured_view.permute(1,2,0).cpu().numpy() for textured_view in textured_views]
+		for i, textured_view in enumerate(textured_views_fix):
+			img = numpy_to_pil(textured_view)[0]
+    
+            # Convert from RGBA to RGB if necessary
+			if img.mode == 'RGBA':
+				img = img.convert('RGB')
+            
+			img.save(f"{textured_views_save_path}/textured_view_{i:02d}.jpg")
+			# numpy_to_pil(textured_view)[0].save(f"{textured_views_save_path}/textured_view_{i:02d}.jpg")
+  
 		textured_views_rgb = torch.cat(textured_views, axis=-1)[:-1,...]
-		textured_views_rgb = textured_views_rgb.permute(1,2,0).cpu().numpy()[None,...]
+		textured_views_rgb = textured_views_rgb.permute(1,2,0).cpu().numpy()[None, ...]
 		v = numpy_to_pil(textured_views_rgb)[0]
 		v.save(f"{self.result_dir}/textured_views_rgb.jpg")
 		# display(v)

@@ -4,7 +4,7 @@ import os
 
 from tqdm import tqdm
 
-max_hits = 2
+max_hits = 1
 style_prompt = "christmas style"
 
 def main():

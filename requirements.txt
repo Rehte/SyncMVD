@@ -12,3 +12,4 @@ fvcore
 trimesh
 embreex
 pandas
+sigal
