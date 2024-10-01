@@ -150,6 +150,7 @@ class UVProjection():
 		self.sampling_mode = sampling_mode
 
 		self.max_hits = max_hits
+		self.remove_backface_hits = True
 		self.occ_mesh = None
 
 
@@ -421,19 +422,20 @@ class UVProjection():
 			# mesh_frame.export(str(k)+"trans.ply")
 
 			c2w = np.eye(4).astype(np.float32)[:3]
-			raycast.prepare(image_height=512, image_width=512, c2w=c2w)
-			ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits)   
+			raycast.prepare(image_height=512 * 3, image_width=512 * 3, c2w=c2w)
+			ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits * 2 - 1)   
 			
 			for i in range(self.max_hits):
 				# mesh_face_indexes = np.hstack([mesh_face_indices[i], np.array([mesh_face_indices[i][-1] for _ in range(faces.shape[0] - mesh_face_indices[i].shape[0])])])
-				visible_faces = faces[mesh_face_indices[i]]  # Only keep the visible faces
-				self.mesh_face_indices_list.append(torch.tensor(mesh_face_indices[i], dtype=torch.int64, device='cuda'))
+				idx = i * 2 if self.remove_backface_hits else i
+				visible_faces = faces[mesh_face_indices[idx]]  # Only keep the visible faces
+				self.mesh_face_indices_list.append(torch.tensor(mesh_face_indices[idx], dtype=torch.int64, device='cuda'))
 				# Trimesh(vertices=vertices, faces=visible_faces).export(str(k)+"trans"+str(i)+".ply")
 				visible_faces = torch.tensor(visible_faces, dtype=torch.int64, device='cuda')
 
 				visible_faces_list.append(visible_faces)
 				new_map = torch.zeros(self.target_size+(self.channels,), device=self.device)
-				self.visible_texture_map_list.append(self.mesh.textures.faces_uvs_padded()[0, mesh_face_indices[i]])
+				self.visible_texture_map_list.append(self.mesh.textures.faces_uvs_padded()[0, mesh_face_indices[idx]])
 		
 		textures = TexturesUV(
 			[new_map] * len(self.cameras) * self.max_hits, 
@@ -574,21 +576,41 @@ class UVProjection():
 		uv_pix2face = rasterizer(self.mesh_uv).pix_to_face
 
 		visible_triangles = []
-		for i in range(len(pix2face_list)):
-			valid_faceid = torch.unique(pix2face_list[i])
-			valid_faceid = valid_faceid[1:] if valid_faceid[0]==-1 else valid_faceid
+		acc_visible_triangles = set()
+		acc_visible_triangles_list = []
+
+		for j in range(self.max_hits):
+			step_acc_visible_triangles = set()
+			for i in range(len(pix2face_list) // self.max_hits):
+				valid_faceid = torch.unique(pix2face_list[i * self.max_hits + j])
+				valid_faceid = valid_faceid[1:] if valid_faceid[0]==-1 else valid_faceid
+				step_acc_visible_triangles.update(valid_faceid.tolist())
+
+				mask = torch.isin(uv_pix2face[0], valid_faceid, assume_unique=False)
+				# uv_pix2face[0][~mask] = -1
+				triangle_mask = torch.ones(self.target_size+(1,), device=self.device)
+				triangle_mask[~mask] = 0
+
+				triangle_mask[:,1:][triangle_mask[:,:-1] > 0] = 1
+				triangle_mask[:,:-1][triangle_mask[:,1:] > 0] = 1
+				triangle_mask[1:,:][triangle_mask[:-1,:] > 0] = 1
+				triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
+				visible_triangles.append(triangle_mask)
+
+			acc_visible_triangles.update(step_acc_visible_triangles)
+			valid_faceid = torch.tensor(list(acc_visible_triangles), device=self.device)
 			mask = torch.isin(uv_pix2face[0], valid_faceid, assume_unique=False)
 			# uv_pix2face[0][~mask] = -1
 			triangle_mask = torch.ones(self.target_size+(1,), device=self.device)
 			triangle_mask[~mask] = 0
-			
 			triangle_mask[:,1:][triangle_mask[:,:-1] > 0] = 1
 			triangle_mask[:,:-1][triangle_mask[:,1:] > 0] = 1
 			triangle_mask[1:,:][triangle_mask[:-1,:] > 0] = 1
 			triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
-			visible_triangles.append(triangle_mask)
+			acc_visible_triangles_list.append(triangle_mask)
 
 		self.visible_triangles = visible_triangles
+		self.acc_visible_triangles = acc_visible_triangles_list
 
 
 
@@ -630,19 +652,26 @@ class UVProjection():
 		loss.backward(retain_graph=False)
 		optimizer.step()
 
-		total_weights = 0
 		baked = 0
-		for i in range(len(bake_maps)):
-			normalized_baked_map = bake_maps[i].detach() / (self.gradient_maps[i] + 1E-8)
-			bake_map = voronoi_solve(normalized_baked_map, self.gradient_maps[i][...,0])
-			weight = self.visible_triangles[i] * (self.cos_maps[i]) ** exp
-			if noisy:
-				noise = torch.rand(weight.shape[:-1]+(1,), generator=generator).type(weight.dtype).to(weight.device)
-				weight *= noise
-			total_weights += weight
-			baked += bake_map * weight
-		baked /= total_weights + 1E-8
-		baked = voronoi_solve(baked, total_weights[...,0])
+		for j in range(self.max_hits):
+			baked_step = 0
+			total_weights = 0				
+			for i in range(len(bake_maps) // self.max_hits):
+				normalized_baked_map = bake_maps[self.max_hits * i + j].detach() / (self.gradient_maps[self.max_hits * i + j] + 1E-8)
+				bake_map = voronoi_solve(normalized_baked_map, self.gradient_maps[self.max_hits * i + j][...,0])
+				weight = self.visible_triangles[i + j * len(bake_maps) // self.max_hits] * (self.cos_maps[self.max_hits * i + j]) ** exp
+				if noisy:
+					noise = torch.rand(weight.shape[:-1]+(1,), generator=generator).type(weight.dtype).to(weight.device)
+					weight *= noise
+				total_weights += weight
+				baked_step += bake_map * weight
+			baked_step /= total_weights + 1E-8
+			baked_step = voronoi_solve(baked_step, total_weights[...,0])
+
+			if j != 0:
+				baked = baked_step * (1 - self.acc_visible_triangles[j - 1]) + baked * self.acc_visible_triangles[j - 1]
+			else:
+				baked = baked_step
 
 		new_map = baked.to(self.device)
 		new_tex = TexturesUV(
