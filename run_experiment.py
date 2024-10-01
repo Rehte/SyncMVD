@@ -19,6 +19,7 @@ from shutil import copy
 
 opt = parse_config()
 # print(opt)
+override_condition_type = 'normal' # set to False to use the condition type from the config file
 
 if opt.mesh_config_relative:
 	mesh_path = join(dirname(opt.config), opt.mesh)
@@ -60,6 +61,9 @@ logging_config = {
 	"view_fast_preview": opt.view_fast_preview,
 	"tex_fast_preview": opt.tex_fast_preview,
 	}
+
+if override_condition_type:
+    opt.cond_type = override_condition_type
 
 if opt.cond_type == "normal":
 	controlnet = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_normalbae", variant="fp16", torch_dtype=torch.float16)
@@ -143,10 +147,16 @@ concatenated_views = total_textured_views.permute(1, 0, 2, 3, 4).reshape(num_pic
 # Save each image from `concatenated_views`
 for i, view in enumerate(concatenated_views):
     # Convert from PyTorch tensor to numpy array, ensuring values are in [0, 255]
-    img_array = (view.numpy() * 255).astype(np.uint8)
+    # img_array = (view.numpy() * 255).astype(np.uint8)
     
-    # Create a PIL image from the numpy array
-    img = Image.fromarray(img_array)
+    # # Create a PIL image from the numpy array
+    # img = Image.fromarray(img_array)
+    
+    img = numpy_to_pil(view.cpu().numpy())[0]
+    
+    # Convert from RGBA to RGB if necessary
+    if img.mode == 'RGBA':
+        img = img.convert('RGB')
     
     # Save the image
     img.save(os.path.join(sigal_views_save_path, f"concatenated_view_{i:02d}.jpg"))

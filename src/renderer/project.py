@@ -28,6 +28,22 @@ from .geometry import HardGeometryShader
 from .shader import HardNChannelFlatShader
 from .voronoi import voronoi_solve
 
+def compute_face_normals(mesh):
+    """Compute normals for each face in the mesh."""
+    vertices = np.array(mesh.vertices)
+    faces = np.array(mesh.faces)
+    
+    # Calculate vectors for two edges of each triangle
+    v1 = vertices[faces[:, 1]] - vertices[faces[:, 0]]
+    v2 = vertices[faces[:, 2]] - vertices[faces[:, 0]]
+    
+    # Compute cross product to get the face normal
+    normals = np.cross(v1, v2)
+    
+    # Normalize the normal vectors
+    norms = np.linalg.norm(normals, axis=1, keepdims=True)
+    return normals / norms
+
 # Copied from XRay
 class RaycastingImaging:
 	def __init__(self):
@@ -45,6 +61,9 @@ class RaycastingImaging:
 	def get_image(self, mesh, max_hits = 4):  #, features):
 		# get a point cloud with corresponding indexes
 		mesh_face_indexes, ray_indexes, points = ray_cast_mesh(mesh, self.rays_origins, self.rays_directions)
+  
+        # get the indexes of the faces that are hit by the rays
+		normals = compute_face_normals(mesh)
 
 		ray_face_indexes = defaultdict(list)
 		for ray_index, ray_face_index in zip(ray_indexes, mesh_face_indexes):
@@ -54,7 +73,14 @@ class RaycastingImaging:
 		for i in range(max_hits):
 			for ray_index, ray_face_index in ray_face_indexes.items():
 				if i < len(ray_face_index):
-					mesh_face_indices[i].append(ray_face_index[i])
+					face_index = ray_face_index[i]
+                    # Get the direction of the current ray
+					ray_direction = self.rays_directions[ray_index]
+					normal = normals[face_index]
+                
+                    # Dot product between normal and ray direction
+					if np.dot(normal, ray_direction) < 0:
+						mesh_face_indices[i].append(ray_face_index[i])
 
 		mesh_face_indices = [np.unique(indexes) for indexes in mesh_face_indices]
 		# print([mesh_face_indices[i].shape for i in range(max_hits)])
@@ -395,7 +421,7 @@ class UVProjection():
 				zero_map = zero_map.detach() / (self.gradient_maps[i]+1E-8)
 			cos_maps.append(zero_map)
 		self.cos_maps = cos_maps
-
+    
 	def generate_occluded_geometry(self):
 		if self.occ_mesh is not None:
 			return
