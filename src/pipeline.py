@@ -811,7 +811,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 			if img.mode == 'RGBA':
 				img = img.convert('RGB')
             
-			img.save(f"{textured_views_save_path}/textured_view_{i:02d}.jpg")
+			img.save(f"{textured_views_save_path}/textured_view_{i:02d}_{self.max_hits}.jpg")
 			# numpy_to_pil(textured_view)[0].save(f"{textured_views_save_path}/textured_view_{i:02d}.jpg")
   
 		textured_views_rgb = torch.cat(textured_views, axis=-1)[:-1,...]
