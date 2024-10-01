@@ -246,11 +246,11 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
             ]
             self.attention_mask.extend(incremented_masks)
         
-        if self.max_hits > 1:
-            for i in range(cam_count):
-                ray_indices = [i*self.max_hits+j for j in range(self.max_hits)]
-                for j in range(self.max_hits):
-                    self.attention_mask[i*self.max_hits+j].extend(ray_indices.remove(i*self.max_hits+j))
+        # if self.max_hits > 1:
+        #     for i in range(cam_count):
+        #         ray_indices = [i*self.max_hits+j for j in range(self.max_hits)]
+        #         for j in range(self.max_hits):
+        #             self.attention_mask[i*self.max_hits+j].extend(ray_indices.remove(i*self.max_hits+j))
 
         # Calculate in-group attention mask
         self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views, self.max_hits)

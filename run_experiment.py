@@ -81,7 +81,10 @@ syncmvd = StableSyncMVDPipeline(**pipe.components)
 
 total_textured_views = []
 
+print(f"Max hits: {opt.max_hits}")
+
 for max_hit in opt.max_hits:
+    print(f"Running with max_hit={max_hit}")
     result_tex_rgb, textured_views, v = syncmvd(
         prompt=opt.prompt,
         height=opt.latent_view_size*8,
@@ -134,41 +137,27 @@ textured_views_save_path = f"{result_dir}/textured_views"
 sigal_views_save_path = f"{result_dir}/sigal_views"
 os.makedirs(sigal_views_save_path, exist_ok=True)
 
-# Convert `total_textured_views` (a list of lists of numpy arrays) into a tensor
-total_textured_views = torch.tensor(total_textured_views)  # Shape: (max_hits, num_pictures, H, W, C)
+for i in range(len(total_textured_views[0])):
+    # Start with the base image from the first list
+    base_image = total_textured_views[0][i]  # Single image from first set
 
-# Get dimensions
-max_hits, num_pictures, H, W, C = total_textured_views.shape
+    # Find corresponding images in subsequent lists based on `max_hit` relationships
+    concat_images = [base_image]  # Store images to concatenate
+    for hit_idx in range(1, len(total_textured_views)):
+        # Map each base image to its corresponding images in the higher `max_hit` sets
+        corresponding_images = total_textured_views[hit_idx][i * (hit_idx + 1): (i + 1) * (hit_idx + 1)]
+        concat_images.extend(corresponding_images)
 
-# Reshape the tensor to concatenate along the height dimension
-# Permute to (num_pictures, max_hits, H, W, C) and then reshape to (num_pictures, H*max_hits, W, C)
-concatenated_views = total_textured_views.permute(1, 0, 2, 3, 4).reshape(num_pictures, H * max_hits, W, C)
+    # Concatenate all corresponding images vertically
+    concat_images_np = np.concatenate(concat_images, axis=0)  # Concatenate along the height (vertical)
+    
+    img = numpy_to_pil(concat_images_np)[0]
 
-# Save each image from `concatenated_views`
-for i, view in enumerate(concatenated_views):
-    # Convert from PyTorch tensor to numpy array, ensuring values are in [0, 255]
-    # img_array = (view.numpy() * 255).astype(np.uint8)
-    
-    # # Create a PIL image from the numpy array
-    # img = Image.fromarray(img_array)
-    
-    img = numpy_to_pil(view.cpu().numpy())[0]
-    
-    # Convert from RGBA to RGB if necessary
+    # Check if the image is in RGBA mode and convert to RGB if necessary
     if img.mode == 'RGBA':
         img = img.convert('RGB')
     
-    # Save the image
-    img.save(os.path.join(sigal_views_save_path, f"concatenated_view_{i:02d}.jpg"))
-
-# total_textured_views = torch.stack(total_textured_views, dim=1)
-# for i, view in enumerate(textured_views):
-#     img = numpy_to_pil(view)[0]
-    
-#     # Convert from RGBA to RGB if necessary
-#     if img.mode == 'RGBA':
-#         img = img.convert('RGB')
-    
-#     img.save(f"{textured_views_save_path}/textured_view_{i:02d}.jpg")
+    # Save the image in JPEG format
+    img.save(os.path.join(sigal_views_save_path, f"concatenated_view_{i:02d}.jpg"), format="JPEG")
 
 display(v)

@@ -2,18 +2,37 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Run Experiment with Conda",
+            "name": "Python: Current File",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/run_experiment.py",
-            "args": [
-                "--config",
-                "data/sneaker/config.yaml"
-            ],
+            "program": "${file}",
+            "args": [],  // <-- Add any command-line arguments here
             "console": "integratedTerminal",
-            "justMyCode": false,
-            "cwd": "${workspaceFolder}",
-            "python": "/home/fai/miniconda3/envs/smvd/bin/python"
+            "justMyCode": true,  // <-- Set this to false if you want to debug third-party libraries too
+            "python": "/home/fai/miniconda3/envs/smvd/bin/python",
+            "env": {},
+            "debugOptions": {
+                "debugpyPath": "/home/fai/miniconda3/envs/smvd/lib/python3.10/site-packages/debugpy"
+            }
         }
     ]
 }
+// {
+//     "version": "0.2.0",
+//     "configurations": [
+//         {
+//             "name": "Python: Run Experiment with Conda",
+//             "type": "python",
+//             "request": "launch",
+//             "program": "${workspaceFolder}/run_experiment.py",
+//             "args": [
+//                 "--config",
+//                 "data/sneaker/config.yaml"
+//             ],
+//             "console": "integratedTerminal",
+//             "justMyCode": false,
+//             "cwd": "${workspaceFolder}",
+//             "python": "/home/fai/miniconda3/envs/smvd/bin/python"
+//         }
+//     ]
+// }

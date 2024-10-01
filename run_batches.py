@@ -4,7 +4,7 @@ import os
 
 from tqdm import tqdm
 
-max_hits = 1
+max_hits = 2
 style_prompt = "christmas style"
 
 def main():
@@ -21,7 +21,7 @@ def main():
             continue
         
         # Construct the command with max_hits
-        command = f"python run_experiment.py --config {config_path} --max_hits {max_hits}"
+        command = f"python run_experiment.py --config {config_path}"
         if style_prompt is not None:
             command += f" --style_prompt \"{style_prompt}\""
         
