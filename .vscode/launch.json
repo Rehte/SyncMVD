@@ -6,17 +6,34 @@
             "type": "python",
             "request": "launch",
             "program": "${file}",
-            "args": [],  // <-- Add any command-line arguments here
+            "args": [],
             "console": "integratedTerminal",
-            "justMyCode": true,  // <-- Set this to false if you want to debug third-party libraries too
+            "justMyCode": true,
             "python": "/home/fai/miniconda3/envs/smvd/bin/python",
-            "env": {},
-            "debugOptions": {
-                "debugpyPath": "/home/fai/miniconda3/envs/smvd/lib/python3.10/site-packages/debugpy"
-            }
+            "env": {}
         }
     ]
 }
+
+// {
+//     "version": "0.2.0",
+//     "configurations": [
+//         {
+//             "name": "Python: Current File",
+//             "type": "python",
+//             "request": "launch",
+//             "program": "${file}",
+//             "args": [],  // <-- Add any command-line arguments here
+//             "console": "integratedTerminal",
+//             "justMyCode": true,  // <-- Set this to false if you want to debug third-party libraries too
+//             "python": "/home/fai/miniconda3/envs/smvd/bin/python",
+//             "env": {},
+//             "debugOptions": {
+//                 "debugpyPath": "/home/fai/miniconda3/envs/smvd/lib/python3.10/site-packages/debugpy"
+//             }
+//         }
+//     ]
+// }
 // {
 //     "version": "0.2.0",
 //     "configurations": [

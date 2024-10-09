@@ -22,7 +22,7 @@ __version__ = "<REPLACE_WITH_VERSION>"
 _VERSIONED_PATH = os.path.join(BASE_PATH, "hf-objaverse-v1")
 os.makedirs(_VERSIONED_PATH, exist_ok=True)
 
-
+objects_path = "Objaverse_Objects.csv"
 
 def glb2obj(glb_path, obj_path):
     mesh = trimesh.load(glb_path)
@@ -249,7 +249,7 @@ def load_lvis_annotations() -> Dict[str, List[str]]:
 
 if __name__ == '__main__':    
     # key: uid, value: mesh_name
-    df = pd.read_csv('Objects.csv')
+    df = pd.read_csv(objects_path)
     uid_to_name = dict(zip(df['uid'], df['name']))
     uid_list = df['uid'].tolist()
     uid_to_description = dict(zip(df['uid'], df['description']))
@@ -278,7 +278,7 @@ if __name__ == '__main__':
         
         description = uid_to_description.get(uid, 'Description not found')
         config_data['prompt'] = f"Photo of a {description}"
-        config_data['mesh_name'] = mesh_name
+        # config_data['mesh_name'] = mesh_name
         
         mesh_name = uid # Set the directory name as uid
         os.makedirs(f"{BASE_PATH}/{mesh_name}", exist_ok=True)

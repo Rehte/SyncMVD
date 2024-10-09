@@ -801,7 +801,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         self.uvp.to(self._execution_device)
         self.uvp_rgb.to(self._execution_device)
         result_tex_rgb, result_tex_rgb_output = get_rgb_texture(self.vae, self.uvp_rgb, latents)
-        self.uvp.save_mesh(f"{self.result_dir}/textured.obj", result_tex_rgb.permute(1,2,0))
+        self.uvp.save_mesh(f"{self.result_dir}/textured_{self.max_hits}.obj", result_tex_rgb.permute(1,2,0))
+        self.uvp.save_mesh_as_glb(f"{self.result_dir}/textured_{self.max_hits}.obj", f"{self.result_dir}/textured_{self.max_hits}.glb")
 
 
         self.uvp_rgb.set_texture_map(result_tex_rgb)
@@ -822,7 +823,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         textured_views_rgb = torch.cat(textured_views, axis=-1)[:-1,...]
         textured_views_rgb = textured_views_rgb.permute(1,2,0).cpu().numpy()[None, ...]
         v = numpy_to_pil(textured_views_rgb)[0]
-        v.save(f"{self.result_dir}/textured_views_rgb.jpg")
+        v.save(f"{self.result_dir}/textured_views_rgb_{self.max_hits}.jpg")
         # display(v)
 
         # Offload last model to CPU

@@ -3,13 +3,31 @@ import subprocess
 import os
 
 from tqdm import tqdm
+import configargparse
+
+def parse_config():
+    parser = configargparse.ArgumentParser(
+                        prog='Multi-View Diffusion',
+                        description='Generate texture given mesh and texture prompt',
+                        epilog='Refer to https://arxiv.org/abs/2311.12891 for more details')
+    # File Config
+    parser.add_argument('--prompt', type=str, required=False)
+    options = parser.parse_args()
+
+    return options
+
 
 max_hits = 2
-style_prompt = "christmas style"
+style_prompt = None # "christmas style"
+
+objects_path = "Objaverse_Objects.csv"
 
 def main():
+    opt = parse_config()
+    if opt.prompt is not None:
+        style_prompt = opt.prompt
     # Read the CSV and extract the list of uids
-    df = pd.read_csv('Objects.csv')
+    df = pd.read_csv(objects_path)
     uid_list = df['uid'].tolist()
 
     # Loop through the uid list and run the experiment for each uid
@@ -26,6 +44,7 @@ def main():
             command += f" --style_prompt \"{style_prompt}\""
         
         # Run the command
+        print(f"Running command: {command}")
         subprocess.run(command, shell=True)
 
 if __name__ == '__main__':
