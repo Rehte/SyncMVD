@@ -81,9 +81,9 @@ syncmvd = StableSyncMVDPipeline(**pipe.components)
 
 total_textured_views = []
 
-print(f"Max hits: {opt.max_hits}")
-
 hits = [1] if opt.max_hits == 1 else list(set([1, opt.max_hits]))
+
+print(f"Max hits: {opt.max_hits}, Hits: {hits}")
 
 for max_hit in hits:
     print(f"Running with max_hit={max_hit}")

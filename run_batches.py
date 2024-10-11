@@ -19,7 +19,7 @@ def parse_config():
 
 max_hits = 2
 style_prompt = None
-style_prompt = "Halloween style"
+style_prompt = "Christmas style"
 
 objects_path = "Objaverse_Objects.csv"
 meshes_path = "final_objects"
@@ -45,6 +45,7 @@ def main():
         command = f"python run_experiment.py --config {config_path}"
         if style_prompt is not None:
             command += f" --style_prompt \"{style_prompt}\""
+        command += f" --max_hits {max_hits}"
         
         # Run the command
         print(f"Running command: {command}")
