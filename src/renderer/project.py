@@ -1,9 +1,14 @@
+import numpy as np
+from collections import defaultdict
+import io
+import subprocess
+
 import torch
 import pytorch3d
 import trimesh
 from trimesh.ray.ray_pyembree import RayMeshIntersector
 from trimesh import Trimesh
-
+from PIL import Image
 
 from pytorch3d.io import load_objs_as_meshes, load_obj, save_obj, IO
 
@@ -25,9 +30,6 @@ from pytorch3d.renderer import (
 from .geometry import HardGeometryShader
 from .shader import HardNChannelFlatShader
 from .voronoi import voronoi_solve
-
-import numpy as np
-from collections import defaultdict
 
 # Copied from XRay
 class RaycastingImaging:
@@ -207,34 +209,19 @@ class UVProjection():
     def save_mesh_as_glb(self, mesh_path, file_path):
         """
         Save the given mesh as a GLB file.
-
-        Args:
-            mesh: A PyTorch3D mesh object.
-            texture_map: The texture map to apply to the mesh (torch.Tensor in RGB format).
-            file_path: Output file path for the GLB file.
         """
-        e = trimesh.load(mesh_path)
-        e.export(file_path)
-        # mesh = self.mesh
-        # # Extract vertices and faces from the mesh
-        # vertices = mesh.verts_list()[0].detach().cpu().numpy()
-        # faces = mesh.faces_list()[0].detach().cpu().numpy()
+        # Load the mesh with textures
+        command = f"obj2gltf -i {mesh_path} -o {file_path}"
+        subprocess.run(command, shell=True)
+        # e = trimesh.load(mesh_path)
+        
+        # # Check if the mesh has visual material
+        # if e.visual.material is None:
+        #     print("Mesh has no material; cannot include textures.")
+        #     return
 
-        # # Create a trimesh object
-        # trimesh_mesh = Trimesh(vertices=vertices, faces=faces, process=False)
-
-        # # If texture map is provided, create a visual using the texture map
-        # if texture_map is not None:
-        #     # Get UV coordinates and faces for UVs
-        #     verts_uvs = mesh.textures.verts_uvs_list()[0].detach().cpu().numpy()
-        #     faces_uvs = mesh.textures.faces_uvs_list()[0].detach().cpu().numpy()
-
-        #     # Create texture visual and add to trimesh object
-        #     visual = trimesh.visual.TextureVisuals(uv=verts_uvs, image=texture_map.permute(1, 2, 0).cpu().numpy())
-        #     trimesh_mesh.visual = visual
-
-        # # Save the trimesh as a GLB file
-        # trimesh_mesh.export(file_path)
+        # # Export the mesh to GLB with textures
+        # e.export(file_path, file_type='glb')
 
     # Code referred to TEXTure code (https://github.com/TEXTurePaper/TEXTurePaper.git)
     def uv_unwrap(self, mesh):

@@ -18,11 +18,14 @@ def parse_config():
 
 
 max_hits = 2
-style_prompt = None # "christmas style"
+style_prompt = None
+style_prompt = "Halloween style"
 
 objects_path = "Objaverse_Objects.csv"
+meshes_path = "final_objects"
 
 def main():
+    global style_prompt
     opt = parse_config()
     if opt.prompt is not None:
         style_prompt = opt.prompt
@@ -32,7 +35,7 @@ def main():
 
     # Loop through the uid list and run the experiment for each uid
     for uid in tqdm(uid_list):
-        config_path = f"objaverse/{uid}/config.yaml"
+        config_path = f"{meshes_path}/{uid}/config.yaml"
         
         if not os.path.exists(config_path):
             print(f"Config file missing: {config_path}")

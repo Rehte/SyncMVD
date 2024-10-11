@@ -19,7 +19,7 @@ from shutil import copy
 
 opt = parse_config()
 # print(opt)
-override_condition_type = 'normal' # set to False to use the condition type from the config file
+override_condition_type = 'depth' # set to False to use the condition type from the config file
 
 if opt.mesh_config_relative:
 	mesh_path = join(dirname(opt.config), opt.mesh)
