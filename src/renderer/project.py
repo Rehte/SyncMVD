@@ -1,5 +1,6 @@
 import torch
 import pytorch3d
+import torchvision.transforms as transforms
 from trimesh.ray.ray_pyembree import RayMeshIntersector
 from trimesh import Trimesh
 
@@ -170,6 +171,16 @@ class UVProjection():
 
 		if autouv or (mesh.textures is None):
 			mesh = self.uv_unwrap(mesh)
+
+		# new_map = torch.zeros(self.target_size+(self.channels,), device=mesh.device)
+		# new_tex = TexturesUV(
+		# 	[new_map], 
+		# 	mesh.textures.faces_uvs_list(),
+		# 	mesh.textures.verts_uvs_list(),
+		# 	sampling_mode=self.sampling_mode
+		# 	)
+		# mesh.textures = new_tex
+
 		self.mesh = mesh
 
 
@@ -422,7 +433,7 @@ class UVProjection():
 			# mesh_frame.export(str(k)+"trans.ply")
 
 			c2w = np.eye(4).astype(np.float32)[:3]
-			raycast.prepare(image_height=512 * 3, image_width=512 * 3, c2w=c2w)
+			raycast.prepare(image_height=512 * 2, image_width=512 * 2, c2w=c2w)
 			ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits * 2 - 1)   
 			
 			for i in range(self.max_hits):
@@ -573,11 +584,11 @@ class UVProjection():
 			cameras=cameras, 
 			raster_settings=raster_settings
 		)
-		uv_pix2face = rasterizer(self.mesh_uv).pix_to_face
+
+		frags = rasterizer(self.mesh_uv)
+		uv_pix2face = frags.pix_to_face
 
 		visible_triangles = []
-		acc_visible_triangles = set()
-		acc_visible_triangles_list = []
 
 		for j in range(self.max_hits):
 			step_acc_visible_triangles = set()
@@ -597,22 +608,38 @@ class UVProjection():
 				triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
 				visible_triangles.append(triangle_mask)
 
-			acc_visible_triangles.update(step_acc_visible_triangles)
-			valid_faceid = torch.tensor(list(acc_visible_triangles), device=self.device)
-			mask = torch.isin(uv_pix2face[0], valid_faceid, assume_unique=False)
-			# uv_pix2face[0][~mask] = -1
-			triangle_mask = torch.ones(self.target_size+(1,), device=self.device)
-			triangle_mask[~mask] = 0
-			triangle_mask[:,1:][triangle_mask[:,:-1] > 0] = 1
-			triangle_mask[:,:-1][triangle_mask[:,1:] > 0] = 1
-			triangle_mask[1:,:][triangle_mask[:-1,:] > 0] = 1
-			triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
-			acc_visible_triangles_list.append(triangle_mask)
-
 		self.visible_triangles = visible_triangles
-		self.acc_visible_triangles = acc_visible_triangles_list
+		self.acc_visible_triangles = self.calculate_acc_vis_tris_mask()
 
+	@torch.enable_grad()
+	def calculate_acc_vis_tris_mask(self):
+		acc_visible_triangles_list = []
+		texture_maps = [torch.zeros((self.channels,) + self.target_size, device=self.device, requires_grad=True) for _ in range(len(self.occ_mesh))]
 
+		for i, mesh in enumerate(self.occ_mesh):
+			_texture_coordinates = (self.occ_mesh.verts_uvs_padded() + 1) / 2
+			texture_interpolates = torch.nn.functional.grid_sample(texture_maps,
+    	                                                       _texture_coordinates,
+    	                                                       mode='nearest',
+    	                                                       align_corners=False,
+    	                                                       padding_mode='border')
+
+		for j in range(self.max_hits):
+			acc_visible_triangles = torch.zeros(self.target_size+(1,), device=self.device) == 1.0
+			for i in range(len(bake_maps) // self.max_hits):
+				acc_visible_triangles =  acc_visible_triangles | (bake_maps[self.max_hits * i + j].detach() > 0.1)
+			acc_visible_triangles_list.append(acc_visible_triangles)
+			# to_pil = transforms.ToPILImage()
+			# uint8_tensor = acc_visible_triangles.to(torch.uint8) * 255
+			# img_tensor = uint8_tensor.permute(2, 0, 1)
+			# image = to_pil(img_tensor)
+	
+			# image.save(f"mask_{j}.png")
+		# quit()
+		self.renderer.rasterizer.raster_settings.image_size = prev_size
+		print("ed")
+
+		return acc_visible_triangles_list
 
 	# Render the current mesh and texture from current cameras
 	def render_textured_views(self):
