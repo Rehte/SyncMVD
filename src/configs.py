@@ -44,6 +44,7 @@ def parse_config():
     parser.add_argument('--mesh_scale', type=float, default=1.0, help='Set above 1 to enlarge object in camera views')
     parser.add_argument('--keep_mesh_uv', action='store_true', help='Don\'t use Xatlas to unwrap UV automatically')
     parser.add_argument('--max_hits', type=int, default=2)
+    parser.add_argument('--disable_base_hit', action='store_true', help='Only run with max_hits')
     # Logging Config
     parser.add_argument('--log_interval', type=int, default=10)
     parser.add_argument('--view_fast_preview', action='store_true', help='Use color transformation matrix instead of decoder to log view images')

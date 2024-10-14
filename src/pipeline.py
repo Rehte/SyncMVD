@@ -100,7 +100,7 @@ def composite_rendered_view(scheduler, backgrounds, foregrounds, masks, t):
 # Split into micro-batches to use less memory in each unet prediction
 # But need more investigation on reducing memory usage
 # Assume it has no possitive effect and use a large "max_batch_size" to skip splitting
-def split_groups(attention_mask, max_batch_size, ref_view=[], max_hits = 2):
+def split_groups(attention_mask, max_batch_size, ref_view=[]):
     group_sets = []
     group = set()
     ref_group = set()
@@ -224,11 +224,14 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
         # Add two additional cameras for painting the top surfaces
         if top_cameras:
-            self.camera_poses.append((30, 0))
-            self.camera_poses.append((30, 180))
-
+            self.camera_poses.append((90, 0))
             self.attention_mask.append([front_view_idx, cam_count])
-            self.attention_mask.append([back_view_idx, cam_count+1])
+            
+            # self.camera_poses.append((30, 0))
+            # self.camera_poses.append((30, 180))
+
+            # self.attention_mask.append([front_view_idx, cam_count])
+            # self.attention_mask.append([back_view_idx, cam_count+1])
 
         # Reference view for attention (all views attend the the views in this list)
         # A forward view will be used if not specified
@@ -245,15 +248,19 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
                 [element + i for element in mask] for mask in attention_mask
             ]
             self.attention_mask.extend(incremented_masks)
-        
+            
+        # Add attention between hit planes
         # if self.max_hits > 1:
         #     for i in range(cam_count):
         #         ray_indices = [i*self.max_hits+j for j in range(self.max_hits)]
         #         for j in range(self.max_hits):
-        #             self.attention_mask[i*self.max_hits+j].extend(ray_indices.remove(i*self.max_hits+j))
+        #             current_index = i * self.max_hits + j
+        #             ray_indices_copy = ray_indices.copy()
+        #             ray_indices_copy.remove(current_index)
+        #             self.attention_mask[current_index].extend(ray_indices_copy)
 
         # Calculate in-group attention mask
-        self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views, self.max_hits)
+        self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views)
 
 
         # Set up pytorch3D for projection between screen space and UV space

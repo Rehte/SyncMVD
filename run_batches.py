@@ -21,7 +21,7 @@ max_hits = 2
 style_prompt = None
 style_prompt = "Christmas style"
 
-objects_path = "Objaverse_Objects.csv"
+objects_path = "Objects_Run.csv"
 meshes_path = "final_objects"
 
 def main():
