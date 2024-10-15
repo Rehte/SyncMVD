@@ -19,8 +19,11 @@ from pytorch3d.renderer import (
 	RasterizationSettings, 
 	MeshRenderer, 
 	MeshRasterizer,  
-	TexturesUV
+	TexturesUV,
+	TexturesVertex
 )
+
+from pytorch3d.renderer.mesh.shader import HardFlatShader
 
 from .geometry import HardGeometryShader
 from .shader import HardNChannelFlatShader
@@ -615,12 +618,74 @@ class UVProjection():
 	def calculate_acc_vis_tris_mask(self):
 		acc_visible_triangles_list = []
 		texture_maps = torch.zeros((len(self.occ_mesh), self.channels,) + self.target_size, device=self.device, requires_grad=True)
+
+		occ_mesh = self.occ_mesh.clone()
+
+		# Define the rasterizer
+		raster_settings = RasterizationSettings(
+		    image_size=self.target_size, 
+		    blur_radius=0.0, 
+		    faces_per_pixel=1,
+		)
+
+		# Define the renderer
+		renderer = MeshRenderer(
+		    rasterizer=MeshRasterizer(cameras=self.occ_cameras, raster_settings=raster_settings),
+		    shader=HardFlatShader(device=self.device, cameras=self.occ_cameras)
+		)
+
+		# 3. Apply a UV map as texture (if UV coordinates and texture are available)
+		# If you want to map UV coordinates to a texture, load it here
+		# texture_map = load_texture_image() 
+		# Then, create TexturesUV from the mesh
+
+		# Or, alternatively, visualize UV by converting UVs to colors:
+		# verts_uvs = occ_mesh.textures.verts_uvs_padded()  # Get UV coordinates
+		# print(verts_uvs.shape)
+		# verts_uvs_colors = torch.cat([verts_uvs, torch.zeros_like(verts_uvs[:,:,:1])], dim=2)  # RGB values from UVs
+		# print(verts_uvs_colors.shape)
+
+		# Create a Textures object using the UV coordinates as colors
+		# textures = TexturesVertex(verts_features=verts_uvs_colors)
+		height, width = 1024, 1024
+		red_channel = torch.linspace(0, 1, steps=width, device=self.device).unsqueeze(0).repeat(height, 1).byte()
+		green_channel = torch.linspace(0, 1, steps=height, device=self.device).unsqueeze(1).repeat(1, width).byte()
+		blue_channel = torch.zeros(height, width, device=self.device)
+		alpha_channel = torch.zeros(height, width, device=self.device)
+
+		texture_map = torch.stack([red_channel, green_channel, blue_channel, alpha_channel], dim=-1)  # Shape: (1024, 1024, 3)
+		occ_mesh.textures = TexturesUV(
+			[texture_map] * len(self.occ_mesh), 
+			self.visible_texture_map_list,
+			self.occ_mesh.textures.verts_uvs_padded(), 
+			sampling_mode=self.sampling_mode
+			)
+		# occ_mesh.textures.maps = texture_map.unsqueeze(0).repeat(len(occ_mesh), 1, 1, 1).permute(0, 3, 1, 2)  # Shape: (batch_size, 3, height, width)
+
+		print(occ_mesh.textures.maps_padded().shape)
+
+		# 4. Render the mesh and visualize UV
+		# Set up a simple camera view
+		prev_size = self.renderer.rasterizer.raster_settings.image_size
+		self.renderer.rasterizer.raster_settings.image_size = (512, 512)
+		images = self.renderer(meshes_world=occ_mesh, cameras=self.occ_cameras, lights=self.lights)
+		print(images[0, ...].shape)
+		self.renderer.rasterizer.raster_settings.image_size = prev_size
+
+		import matplotlib.pyplot as plt
+		plt.figure(figsize=(10, 10))
+		plt.imshow(images[4, ..., :3].cpu().numpy())
+		plt.axis("off")
+		plt.show()
+
+		quit()
+		
 		# TODO: Render Texture Coordinate from viewport
 
 		for i, mesh in enumerate(self.occ_mesh):
 			_texture_coordinates = (self.occ_mesh.textures.verts_uvs_padded() + 1) / 2
 			texture_interpolates = torch.nn.functional.grid_sample(texture_maps,
-    	                                                       _texture_coordinates,
+    	                                                       images,
     	                                                       mode='nearest',
     	                                                       align_corners=False,
     	                                                       padding_mode='border')
