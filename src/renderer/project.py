@@ -1,6 +1,7 @@
 import torch
 import pytorch3d
 from trimesh.ray.ray_pyembree import RayMeshIntersector
+import torchvision.transforms as transforms
 from trimesh import Trimesh
 
 
@@ -579,6 +580,8 @@ class UVProjection():
 		acc_visible_triangles = set()
 		acc_visible_triangles_list = []
 
+		to_pil = transforms.ToPILImage()
+
 		for j in range(self.max_hits):
 			step_acc_visible_triangles = set()
 			for i in range(len(pix2face_list) // self.max_hits):
@@ -608,9 +611,15 @@ class UVProjection():
 			triangle_mask[1:,:][triangle_mask[:-1,:] > 0] = 1
 			triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
 			acc_visible_triangles_list.append(triangle_mask)
+			uint8_tensor = triangle_mask
+			img_tensor = uint8_tensor.permute(2, 0, 1)
+			image = to_pil(img_tensor)
+
+			image.save(f"mask_{j}.png")
 
 		self.visible_triangles = visible_triangles
 		self.acc_visible_triangles = acc_visible_triangles_list
+
 
 
 
@@ -635,7 +644,6 @@ class UVProjection():
 		bake_maps = [torch.zeros(self.target_size+(views[0].shape[2],), device=self.device, requires_grad=True) for view in views]
 		optimizer = torch.optim.SGD(bake_maps, lr=1, momentum=0)
 		optimizer.zero_grad()
-		loss = 0
 
 		new_tex = TexturesUV(
 			bake_maps, 
@@ -645,21 +653,27 @@ class UVProjection():
 			)
 		self.occ_mesh.textures = new_tex
 
-		for i, mesh in enumerate(self.occ_mesh):
-			images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights, device=self.device)
-			predicted_rgb = images_predicted[..., :-1]
-			loss += (((predicted_rgb[...] - views[i]))**2).sum()
-		loss.backward(retain_graph=False)
-		optimizer.step()
-
 		baked = 0
+		to_pil = transforms.ToPILImage()
+
 		for j in range(self.max_hits):
+			loss = 0
+			optimizer.zero_grad()
+			for i, mesh in enumerate(self.occ_mesh):
+				if i % self.max_hits != j:
+					continue
+				images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights, device=self.device)
+				predicted_rgb = images_predicted[..., :-1]
+				loss += (((predicted_rgb[...] - views[i]))**2).sum()
+			loss.backward(retain_graph=False)
+			optimizer.step()
+
 			baked_step = 0
 			total_weights = 0				
 			for i in range(len(bake_maps) // self.max_hits):
 				normalized_baked_map = bake_maps[self.max_hits * i + j].detach() / (self.gradient_maps[self.max_hits * i + j] + 1E-8)
 				bake_map = voronoi_solve(normalized_baked_map, self.gradient_maps[self.max_hits * i + j][...,0])
-				weight = self.visible_triangles[i + j * len(bake_maps) // self.max_hits] * (self.cos_maps[self.max_hits * i + j]) ** exp
+				weight = self.visible_triangles[i + j * 10] * (self.cos_maps[self.max_hits * i + j]) ** exp
 				if noisy:
 					noise = torch.rand(weight.shape[:-1]+(1,), generator=generator).type(weight.dtype).to(weight.device)
 					weight *= noise
@@ -669,7 +683,11 @@ class UVProjection():
 			baked_step = voronoi_solve(baked_step, total_weights[...,0])
 
 			if j != 0:
-				baked = baked_step * (1 - self.acc_visible_triangles[j - 1]) + baked * self.acc_visible_triangles[j - 1]
+				to_pil(baked.permute(2, 0, 1)).save(f"baked_0.png")
+				to_pil(baked_step.permute(2, 0, 1)).save(f"baked_step_1.png")
+				baked = baked_step * (self.acc_visible_triangles[j] - self.acc_visible_triangles[j - 1]) + baked * (self.acc_visible_triangles[j - 1] + 1 - self.acc_visible_triangles[j])
+				to_pil(baked.permute(2, 0, 1)).save(f"baked_1.png")
+
 			else:
 				baked = baked_step
 
