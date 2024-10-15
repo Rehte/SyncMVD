@@ -650,7 +650,7 @@ class UVProjection():
             exp=1
         if not channels:
             channels = self.channels
-        views = [view.permute(1, 2, 0) for view in views]
+        views = [view.permute(1, 2, 0) for view in views] # (C, H, W) -> (H, W, C)
 
         bake_maps = [torch.zeros(self.target_size+(views[0].shape[2],), device=self.device, requires_grad=True) for view in views]
         optimizer = torch.optim.SGD(bake_maps, lr=1, momentum=0)
@@ -664,13 +664,24 @@ class UVProjection():
             sampling_mode=self.sampling_mode
             )
         self.occ_mesh.textures = new_tex
-
-        for i, mesh in enumerate(self.occ_mesh):
-            images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights, device=self.device)
-            predicted_rgb = images_predicted[..., :-1]
-            loss += (((predicted_rgb[...] - views[i]))**2).sum()
-        loss.backward(retain_graph=False)
-        optimizer.step()
+        
+        for j in range(self.max_hits):
+            optimizer.zero_grad()
+            loss = 0
+            for i in range(len(self.occ_mesh) // self.max_hits):
+                mesh = self.occ_mesh[self.max_hits * i + j]
+                images_predicted = self.renderer(mesh, cameras=self.occ_cameras[self.max_hits * i + j], lights=self.lights, device=self.device)
+                predicted_rgb = images_predicted[..., :-1]
+                loss += (((predicted_rgb[...] - views[self.max_hits * i + j]))**2).sum()
+            loss.backward(retain_graph=False)
+            optimizer.step()
+        
+        # for i, mesh in enumerate(self.occ_mesh):
+        #     images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights, device=self.device)
+        #     predicted_rgb = images_predicted[..., :-1]
+        #     loss += (((predicted_rgb[...] - views[i]))**2).sum()
+        # loss.backward(retain_graph=False)
+        # optimizer.step()
 
         baked = 0
         for j in range(self.max_hits):

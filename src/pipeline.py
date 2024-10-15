@@ -243,11 +243,17 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         ]
         attention_mask = self.attention_mask.copy()
 
-        for i in range(1, self.max_hits):
-            incremented_masks = [
-                [element + i for element in mask] for mask in attention_mask
-            ]
-            self.attention_mask.extend(incremented_masks)
+        for j in range(len(attention_mask)):
+            for i in range(1, self.max_hits):            
+                mask = attention_mask[j]
+                incremented_masks = [element + i for element in mask]
+                self.attention_mask.insert(self.max_hits * j + i, incremented_masks)
+
+        # for i in range(1, self.max_hits):
+        #     incremented_masks = [
+        #         [element + i for element in mask] for mask in attention_mask
+        #     ]
+        #     self.attention_mask.extend(incremented_masks)
             
         # Add attention between hit planes
         # if self.max_hits > 1:
