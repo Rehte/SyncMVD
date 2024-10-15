@@ -614,10 +614,11 @@ class UVProjection():
 	@torch.enable_grad()
 	def calculate_acc_vis_tris_mask(self):
 		acc_visible_triangles_list = []
-		texture_maps = [torch.zeros((self.channels,) + self.target_size, device=self.device, requires_grad=True) for _ in range(len(self.occ_mesh))]
+		texture_maps = torch.zeros((len(self.occ_mesh), self.channels,) + self.target_size, device=self.device, requires_grad=True)
+		# TODO: Render Texture Coordinate from viewport
 
 		for i, mesh in enumerate(self.occ_mesh):
-			_texture_coordinates = (self.occ_mesh.verts_uvs_padded() + 1) / 2
+			_texture_coordinates = (self.occ_mesh.textures.verts_uvs_padded() + 1) / 2
 			texture_interpolates = torch.nn.functional.grid_sample(texture_maps,
     	                                                       _texture_coordinates,
     	                                                       mode='nearest',
@@ -652,7 +653,6 @@ class UVProjection():
 	# First bake into individual textures then combine based on cosine weight
 	@torch.enable_grad()
 	def bake_texture(self, views=None, main_views=[], cos_weighted=True, channels=None, exp=None, noisy=False, generator=None):
-		# TODO: Implement texture baking w/ occluded region
 		if not exp:
 			exp=1
 		if not channels:
