@@ -8,7 +8,9 @@ def prepare_directional_prompt(prompt, negative_prompt, inside=False):
 	negative_prompt = [negative_prompt + f", {v} view." for v in direction_names ]
 
 	if inside:
-		directional_prompt = [f"inside of {p}" for p in directional_prompt]
+		directional_prompt = [f"inside of {p}" for p in directional_prompt] 
+        # inside of
+        # cross section of
 	return directional_prompt, negative_prompt
 
 

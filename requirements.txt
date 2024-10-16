@@ -13,3 +13,7 @@ trimesh
 embreex
 pandas
 sigal
+
+# LLM
+openai
+python-dotenv

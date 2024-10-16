@@ -41,6 +41,7 @@ from .syncmvd.attention import SamplewiseAttnProcessor2_0, replace_attention_pro
 from .syncmvd.prompt import *
 from .syncmvd.step import step_tex
 from .utils import *
+from .openai_api import get_styles
 
 
 
@@ -413,8 +414,12 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor
 
+        original_prompt = prompt
+        inside_prompt = prompt
         if style_prompt is not None:
-            prompt = f"{prompt}, {style_prompt}"
+            outside_style, inside_style = get_styles(style_prompt)
+            prompt = f"{prompt}, {outside_style}"
+            inside_prompt = f"{original_prompt}, {inside_style}"
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
@@ -454,12 +459,15 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         guess_mode = controlnet_guess_mode or global_pool_conditions
 
 
-        original_prompt = prompt
         original_negative_prompt = negative_prompt
+        
+        print(f"Prompt: {prompt}")
+        print(f"Inside Prompt: {inside_prompt}")
+        
         # 3. Encode input prompt
         prompt, negative_prompt = prepare_directional_prompt(prompt, negative_prompt)
 
-        inside_prompt, insdide_negative_prompt = prepare_directional_prompt(original_prompt, original_negative_prompt, inside=True)
+        inside_prompt, insdide_negative_prompt = prepare_directional_prompt(inside_prompt, original_negative_prompt, inside=True)
 
         text_encoder_lora_scale = (
             cross_attention_kwargs.get("scale", None) if cross_attention_kwargs is not None else None
