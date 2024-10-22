@@ -3,7 +3,7 @@ import pytorch3d
 import torchvision.transforms as transforms
 from trimesh.ray.ray_pyembree import RayMeshIntersector
 from trimesh import Trimesh
-
+from diffusers.utils import numpy_to_pil
 
 from pytorch3d.io import load_objs_as_meshes, load_obj, save_obj, IO
 
@@ -31,6 +31,7 @@ from .voronoi import voronoi_solve
 
 import numpy as np
 from collections import defaultdict
+from scipy.ndimage import binary_erosion
 
 # Copied from XRay
 class RaycastingImaging:
@@ -617,7 +618,7 @@ class UVProjection():
 	@torch.enable_grad()
 	def calculate_acc_vis_tris_mask(self):
 		acc_visible_triangles_list = []
-		texture_maps = torch.zeros((len(self.occ_mesh), self.channels,) + self.target_size, device=self.device, requires_grad=True)
+		texture_maps = torch.ones((len(self.occ_mesh), self.channels,) + self.target_size, device=self.device, requires_grad=True)
 
 		occ_mesh = self.occ_mesh.clone()
 
@@ -648,10 +649,10 @@ class UVProjection():
 		# Create a Textures object using the UV coordinates as colors
 		# textures = TexturesVertex(verts_features=verts_uvs_colors)
 		height, width = 1024, 1024
-		red_channel = torch.linspace(0, 1, steps=width, device=self.device).unsqueeze(0).repeat(height, 1).byte()
-		green_channel = torch.linspace(0, 1, steps=height, device=self.device).unsqueeze(1).repeat(1, width).byte()
+		red_channel = torch.linspace(0, 1, steps=width, device=self.device).unsqueeze(0).repeat(height, 1)
+		green_channel = torch.linspace(0, 1, steps=height, device=self.device).unsqueeze(1).repeat(1, width)
 		blue_channel = torch.zeros(height, width, device=self.device)
-		alpha_channel = torch.zeros(height, width, device=self.device)
+		alpha_channel = torch.ones(height, width, device=self.device)
 
 		texture_map = torch.stack([red_channel, green_channel, blue_channel, alpha_channel], dim=-1)  # Shape: (1024, 1024, 3)
 		occ_mesh.textures = TexturesUV(
@@ -662,38 +663,59 @@ class UVProjection():
 			)
 		# occ_mesh.textures.maps = texture_map.unsqueeze(0).repeat(len(occ_mesh), 1, 1, 1).permute(0, 3, 1, 2)  # Shape: (batch_size, 3, height, width)
 
-		print(occ_mesh.textures.maps_padded().shape)
-
 		# 4. Render the mesh and visualize UV
 		# Set up a simple camera view
 		prev_size = self.renderer.rasterizer.raster_settings.image_size
 		self.renderer.rasterizer.raster_settings.image_size = (512, 512)
 		images = self.renderer(meshes_world=occ_mesh, cameras=self.occ_cameras, lights=self.lights)
-		print(images[0, ...].shape)
 		self.renderer.rasterizer.raster_settings.image_size = prev_size
 
-		import matplotlib.pyplot as plt
-		plt.figure(figsize=(10, 10))
-		plt.imshow(images[4, ..., :3].cpu().numpy())
-		plt.axis("off")
-		plt.show()
-
-		quit()
+		# 흰색 배경 감지 (RGB 값이 1인 경우, 흰색 배경으로 간주)
+		white_background = torch.tensor([1.0, 1.0, 1.0], device=self.device).view(1, 3, 1, 1)
+		mask = (images[..., :3].permute(0, 3, 1, 2) == white_background).all(dim=1, keepdim=True)  # (B, 1, H, W), True for white
 		
-		# TODO: Render Texture Coordinate from viewport
+		# 실루엣 마스크 반전 (흰색이 아닌 부분을 실루엣으로 처리)
+		mask_inv = ~mask  # (B, 1, H, W), True for non-white (silhouette)
+		
+		# 마스크 안쪽으로 3픽셀 이동시키기: 2D 컨볼루션을 사용하여 binary erosion
+		kernel = torch.ones((1, 1, 3, 3), device=mask.device)  # 3x3 필터
+		mask_inv_float = mask_inv.float()  # (B, 1, H, W)
+		eroded_mask = torch.nn.functional.conv2d(mask_inv_float, kernel, padding=1) == 9  # 9개의 1이 모두 있는 경우만 True
+		eroded_mask = eroded_mask.float()  # (B, 1, H, W)
+		
+		# 최종 마스크 생성 (안쪽 흰색, 바깥쪽 검은색)
+		final_mask = torch.zeros_like(eroded_mask, dtype=torch.float32)  # (B, 1, H, W)
+		final_mask[eroded_mask == 1] = 1.0  # 내부를 흰색으로 설정
+		final_mask = final_mask.repeat(1, 4, 1, 1)  # (B, 3, H, W)
 
-		for i, mesh in enumerate(self.occ_mesh):
-			_texture_coordinates = (self.occ_mesh.textures.verts_uvs_padded() + 1) / 2
-			texture_interpolates = torch.nn.functional.grid_sample(texture_maps,
+		numpy_to_pil(images[0, ..., :3].cpu().numpy())[0].save(f"cond_u.png")
+
+		images = images[..., :2] * 2 - 1
+		images = images.reshape(len(self.occ_mesh), -1, 1, 2)
+		images[:, :, :, 1] = -images[:, :, :, 1]  # reverse y
+
+		print(final_mask.shape, images.shape)
+		numpy_to_pil(final_mask.permute(0, 2, 3, 1)[0, ..., :3].cpu().numpy())[0].save(f"cond_o.png")
+
+		# Now I know whats wrong
+		print(final_mask.min(), final_mask.max())  # 텍스처 맵의 값이 예상대로인지 확인
+
+		texture_interpolates = torch.nn.functional.grid_sample(final_mask,
     	                                                       images,
     	                                                       mode='nearest',
-    	                                                       align_corners=False,
+    	                                                       align_corners=True,
     	                                                       padding_mode='border')
-
+		
+		texture_interpolates = texture_interpolates.permute(0, 2, 3, 1).reshape(len(self.occ_mesh), 512, 512, 4)
+		
+		print(texture_interpolates.shape)
+		numpy_to_pil(texture_interpolates[0, ..., :3].cpu().detach().numpy())[0].save(f"cond.png")
+			
 		for j in range(self.max_hits):
 			acc_visible_triangles = torch.zeros(self.target_size+(1,), device=self.device) == 1.0
-			for i in range(len(bake_maps) // self.max_hits):
-				acc_visible_triangles =  acc_visible_triangles | (bake_maps[self.max_hits * i + j].detach() > 0.1)
+			for i in range(len(self.occ_mesh) // self.max_hits):
+				acc_visible_triangles =  acc_visible_triangles | (texture_interpolates[self.max_hits * i + j] > 0.1)
+			numpy_to_pil(acc_visible_triangles[..., :3].cpu().detach().numpy())[0].save(f"maps{j}.png")
 			acc_visible_triangles_list.append(acc_visible_triangles)
 			# to_pil = transforms.ToPILImage()
 			# uint8_tensor = acc_visible_triangles.to(torch.uint8) * 255
