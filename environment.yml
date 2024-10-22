@@ -2,38 +2,43 @@ name: smvd
 channels:
   - defaults
 dependencies:
-  - _libgcc_mutex=0.1=main
-  - _openmp_mutex=5.1=1_gnu
-  - bzip2=1.0.8=h5eee18b_6
-  - ca-certificates=2024.7.2=h06a4308_0
-  - ld_impl_linux-64=2.38=h1181459_1
-  - libffi=3.4.4=h6a678d5_1
-  - libgcc-ng=11.2.0=h1234567_1
-  - libgomp=11.2.0=h1234567_1
-  - libstdcxx-ng=11.2.0=h1234567_1
-  - libuuid=1.41.5=h5eee18b_0
-  - ncurses=6.4=h6a678d5_0
-  - openssl=3.0.14=h5eee18b_0
-  - pip=24.2=py310h06a4308_0
-  - python=3.10.14=h955ad1f_1
-  - readline=8.2=h5eee18b_0
-  - setuptools=72.1.0=py310h06a4308_0
-  - sqlite=3.45.3=h5eee18b_0
-  - tk=8.6.14=h39e8969_0
-  - tzdata=2024a=h04d1e81_0
-  - wheel=0.43.0=py310h06a4308_0
-  - xz=5.4.6=h5eee18b_1
-  - zlib=1.2.13=h5eee18b_1
+  - _libgcc_mutex=0.1
+  - _openmp_mutex=5.1
+  - bzip2=1.0.8
+  - ca-certificates=2024.7.2
+  - ld_impl_linux-64=2.38
+  - libffi=3.4.4
+  - libgcc-ng=11.2.0
+  - libgomp=11.2.0
+  - libstdcxx-ng=11.2.0
+  - libuuid=1.41.5
+  - ncurses=6.4
+  - openssl=3.0.14
+  - pip=24.2
+  - python=3.10.14
+  - readline=8.2
+  - setuptools=72.1.0
+  - sqlite=3.45.3
+  - tk=8.6.14
+  - wheel=0.43.0
+  - xz=5.4.6
+  - zlib=1.2.13
   - pip:
       - accelerate==0.34.2
+      - annotated-types==0.7.0
+      - anyio==4.6.2.post1
       - asttokens==2.4.1
+      - blinker==1.8.2
       - certifi==2024.8.30
       - charset-normalizer==3.3.2
+      - click==8.1.7
       - cmake==3.30.3
       - configargparse==1.7
       - cupy-cuda11x==12.2.0
+      - debugpy==1.8.6
       - decorator==5.1.1
       - diffusers==0.19.3
+      - distro==1.9.0
       - embreex==2.17.7.post5
       - exceptiongroup==1.2.2
       - executing==2.1.0
@@ -41,6 +46,9 @@ dependencies:
       - filelock==3.16.0
       - fsspec==2024.9.0
       - fvcore==0.1.5.post20221221
+      - h11==0.14.0
+      - httpcore==1.0.6
+      - httpx==0.27.2
       - huggingface-hub==0.24.7
       - idna==3.9
       - importlib-metadata==8.5.0
@@ -48,11 +56,14 @@ dependencies:
       - ipython==8.27.0
       - jedi==0.19.1
       - jinja2==3.1.4
+      - jiter==0.6.1
       - lit==18.1.8
+      - markdown==3.7
       - markupsafe==2.1.5
       - matplotlib-inline==0.1.7
       - mpmath==1.3.0
       - mypy-extensions==1.0.0
+      - natsort==8.4.0
       - networkx==3.3
       - numpy==1.26.4
       - nvidia-cublas-cu11==11.10.3.66
@@ -66,37 +77,48 @@ dependencies:
       - nvidia-cusparse-cu11==11.7.4.91
       - nvidia-nccl-cu11==2.14.3
       - nvidia-nvtx-cu11==11.7.91
+      - openai==1.51.2
       - packaging==24.1
+      - pandas==2.2.3
       - parso==0.8.4
       - pexpect==4.9.0
+      - pilkit==3.0
       - pillow==10.4.0
       - portalocker==2.10.1
       - prompt-toolkit==3.0.47
       - psutil==6.0.0
       - ptyprocess==0.7.0
       - pure-eval==0.2.3
+      - pydantic==2.9.2
+      - pydantic-core==2.23.4
       - pygments==2.18.0
       - pyre-extensions==0.0.29
+      - python-dateutil==2.9.0.post0
+      - python-dotenv==1.0.1
       - pytorch3d==0.7.3
+      - pytz==2024.2
       - pyyaml==6.0.2
       - regex==2024.9.11
       - requests==2.32.3
       - safetensors==0.4.5
+      - sigal==2.4
       - six==1.16.0
+      - sniffio==1.3.1
       - stack-data==0.6.3
       - sympy==1.13.2
       - tabulate==0.9.0
       - termcolor==2.4.0
-      - tokenizers==0.15.2
+      - tokenizers==0.20.1
       - torch==2.0.1
       - torchvision==0.15.2
       - tqdm==4.66.5
       - traitlets==5.14.3
-      - transformers==4.36.0
+      - transformers==4.45.2
       - trimesh==4.4.9
       - triton==2.0.0
       - typing-extensions==4.12.2
       - typing-inspect==0.9.0
+      - tzdata==2024.1
       - urllib3==2.2.3
       - wcwidth==0.2.13
       - xatlas==0.0.9

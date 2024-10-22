@@ -35,7 +35,7 @@ run_multiple_style_prompts = True
 
 objects_path = "Objects_Run.csv"
 objects_path = "Objaverse_Objects.csv"
-meshes_path = "final_objects2"
+meshes_path = "final_objects3"
 
 def run_batch(uid_list, style_prompt=None, max_hits=2):
     for uid in tqdm(uid_list):
