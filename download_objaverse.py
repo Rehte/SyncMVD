@@ -15,7 +15,7 @@ import trimesh
 
 
 BASE_PATH = os.path.join("./assets/objaverse")
-BASE_PATH = os.path.join("./final_objects")
+BASE_PATH = os.path.join("./final_objects3")
 os.makedirs(BASE_PATH, exist_ok=True)
 
 __version__ = "<REPLACE_WITH_VERSION>"
@@ -277,7 +277,7 @@ if __name__ == '__main__':
         mesh_name = uid_to_name.get(uid, 'UID not found').replace(' ', '_')
         
         description = uid_to_description.get(uid, 'Description not found')
-        config_data['prompt'] = f"a photo of a {description}"
+        config_data['prompt'] = f"{description}"
         # config_data['mesh_name'] = mesh_name
         
         mesh_name = uid # Set the directory name as uid
