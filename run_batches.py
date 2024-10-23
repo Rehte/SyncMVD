@@ -31,6 +31,30 @@ style_prompts = [
     "Christmas style",
 ]
 
+category_prompts = {
+    "car": [
+
+    ],
+    "cup": [
+
+    ],
+    "hat": [
+
+    ],
+    "house": [ # also cabin
+
+    ],
+    "tent": [
+
+    ],
+    "ring": [
+
+    ],
+    "crown": [
+
+    ]
+}
+
 run_multiple_style_prompts = True
 
 objects_path = "Objects_Run.csv"
