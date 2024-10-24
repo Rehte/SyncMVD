@@ -19,7 +19,8 @@ from pytorch3d.renderer import (
 	RasterizationSettings, 
 	MeshRenderer, 
 	MeshRasterizer,  
-	TexturesUV
+	TexturesUV,
+	SoftPhongShader
 )
 
 from .geometry import HardGeometryShader
@@ -577,10 +578,6 @@ class UVProjection():
 		uv_pix2face = rasterizer(self.mesh_uv).pix_to_face
 
 		visible_triangles = []
-		acc_visible_triangles = set()
-		acc_visible_triangles_list = []
-
-		to_pil = transforms.ToPILImage()
 
 		for j in range(self.max_hits):
 			step_acc_visible_triangles = set()
@@ -600,27 +597,84 @@ class UVProjection():
 				triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
 				visible_triangles.append(triangle_mask)
 
-			acc_visible_triangles.update(step_acc_visible_triangles)
-			valid_faceid = torch.tensor(list(acc_visible_triangles), device=self.device)
-			mask = torch.isin(uv_pix2face[0], valid_faceid, assume_unique=False)
-			# uv_pix2face[0][~mask] = -1
-			triangle_mask = torch.ones(self.target_size+(1,), device=self.device)
-			triangle_mask[~mask] = 0
-			triangle_mask[:,1:][triangle_mask[:,:-1] > 0] = 1
-			triangle_mask[:,:-1][triangle_mask[:,1:] > 0] = 1
-			triangle_mask[1:,:][triangle_mask[:-1,:] > 0] = 1
-			triangle_mask[:-1,:][triangle_mask[1:,:] > 0] = 1
-			acc_visible_triangles_list.append(triangle_mask)
-			uint8_tensor = triangle_mask
-			img_tensor = uint8_tensor.permute(2, 0, 1)
-			image = to_pil(img_tensor)
-
-			image.save(f"mask_{j}.png")
-
 		self.visible_triangles = visible_triangles
-		self.acc_visible_triangles = acc_visible_triangles_list
+		self.acc_visible_triangles = self.calculate_acc_vis_tris_mask()
+
+	def get_mask(self, mask):
+		# Step 1: Multiply by 5
+		mask = mask * 5
+		mask = mask.permute(2, 0, 1).unsqueeze(0)
+
+		# Step 2: Smooth (apply Gaussian blur)
+		def gaussian_kernel(size=5, sigma=1.0):
+			coords = torch.arange(size, dtype=torch.float32)
+			coords -= (size - 1) / 2.0
+			g = torch.exp(-(coords**2) / (2 * sigma**2))
+			g /= g.sum()
+			kernel = g[:, None] * g[None, :]
+			return kernel
+
+		kernel = gaussian_kernel(size=5, sigma=1.0)
+		kernel = kernel.unsqueeze(0).unsqueeze(0)  # Shape it for convolution
+		kernel = kernel.to(mask.device)
+		
+		# Apply 2D convolution for smoothing (Gaussian blur)
+		mask = torch.nn.functional.conv2d(mask, kernel, padding=2)
+		
+		# Step 3: Clamp values between 0 and 1
+		mask = torch.clamp(mask, min=0.0, max=1.0)
+		
+		# Remove the batch and channel dimension to get back to (N, N, 1)
+		mask = mask.squeeze(0).permute(1, 2, 0)
+
+		return mask
+
+	@torch.enable_grad()
+	def calculate_acc_vis_tris_mask(self):
+		acc_visible_triangles_list = []
+		bake_maps = [torch.zeros(self.target_size+(1,), device=self.device, requires_grad=True) for _ in range(len(self.occ_mesh))]
+		optimizer = torch.optim.SGD(bake_maps, lr=1, momentum=0)
+		optimizer.zero_grad()
+
+		new_tex = TexturesUV(
+			bake_maps, 
+			self.visible_texture_map_list,
+			self.occ_mesh.textures.verts_uvs_padded(), 
+			sampling_mode=self.sampling_mode
+			)
+		self.occ_mesh.textures = new_tex
+
+		baked = 0
+		to_pil = transforms.ToPILImage()
+
+		for j in range(self.max_hits):
+			loss = 0
+			optimizer.zero_grad()
+			for i, mesh in enumerate(self.occ_mesh):
+				if i % self.max_hits != j:
+					continue
+				images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights, device=self.device)
+				predicted_rgb = images_predicted[..., :-1]
+				loss += (((predicted_rgb[...] - torch.ones_like(predicted_rgb)))**2).sum()
+			loss.backward(retain_graph=False)
+			optimizer.step()
+
+			stacked_tensors = torch.stack([bake_maps[self.max_hits * i + j] for i in range(len(bake_maps) // self.max_hits)]) 
+
+			baked_step = torch.max(stacked_tensors, dim=0).values
+
+			if j != 0:
+				to_pil(self.get_mask(baked).permute(2, 0, 1)).save(f"baked_0.png")
+				baked = torch.max(torch.stack([baked_step, baked]), dim=0).values
+				to_pil(self.get_mask(baked).permute(2, 0, 1)).save(f"baked_1.png")
+
+			else:
+				baked = baked_step
+
+			acc_visible_triangles_list.append(self.get_mask(baked))
 
 
+		return acc_visible_triangles_list
 
 
 	# Render the current mesh and texture from current cameras
