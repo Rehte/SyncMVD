@@ -443,11 +443,16 @@ class UVProjection():
 
             c2w = np.eye(4).astype(np.float32)[:3]
             raycast.prepare(image_height=512 * 3, image_width=512 * 3, c2w=c2w)
-            ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits * 2 - 1)   
+            ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits * 2)   
             
             for i in range(self.max_hits):
                 # mesh_face_indexes = np.hstack([mesh_face_indices[i], np.array([mesh_face_indices[i][-1] for _ in range(faces.shape[0] - mesh_face_indices[i].shape[0])])])
                 idx = i * 2 if self.remove_backface_hits else i
+                if len(mesh_face_indices[idx]) == 0:
+                    print(f"No visible faces for camera {k} hit {i}")
+                    # visible_faces = []
+                    #visible_faces = faces[mesh_face_indices[0]]
+                    mesh_face_indices[idx] = mesh_face_indices[0]
                 visible_faces = faces[mesh_face_indices[idx]]  # Only keep the visible faces
                 self.mesh_face_indices_list.append(torch.tensor(mesh_face_indices[idx], dtype=torch.int64, device='cuda'))
                 # Trimesh(vertices=vertices, faces=visible_faces).export(str(k)+"trans"+str(i)+".ply")

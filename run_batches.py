@@ -17,23 +17,23 @@ def parse_config():
     return options
 
 
-max_hits = [2, 4]
+max_hits = [3]
 style_prompt = None
 style_prompts = [
     None,
-    "Halloween style on the outside and christmas style inside",
-    "Cyberpunk style",
+    # "Halloween style on the outside and christmas style inside",
+    # "Cyberpunk style",
     "Luxury style",
     "Festival style",
-    "Underwater world style",
-    "Carnival style"
-    "Halloween style",
+    # "Underwater world style",
+    # "Carnival style"
+    # "Halloween style",
     "Christmas style",
 ]
 
 category_prompts = {
     "car": [
-
+        "Minecart style",
     ],
     "cup": [
 
