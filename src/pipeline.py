@@ -226,13 +226,15 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         # Add two additional cameras for painting the top surfaces
         if top_cameras:
             self.camera_poses.append((90, 0))
-            self.attention_mask.append([front_view_idx, cam_count])
-            
-            # self.camera_poses.append((30, 0))
-            # self.camera_poses.append((30, 180))
+            self.camera_poses.append((30, 0))
+            self.camera_poses.append((30, 180))
 
             # self.attention_mask.append([front_view_idx, cam_count])
             # self.attention_mask.append([back_view_idx, cam_count+1])
+            
+            self.attention_mask.append([cam_count, cam_count+1, cam_count+2])
+            self.attention_mask.append([cam_count, cam_count+1, cam_count+2])
+            self.attention_mask.append([cam_count, cam_count+1, cam_count+2])
 
         # Reference view for attention (all views attend the the views in this list)
         # A forward view will be used if not specified

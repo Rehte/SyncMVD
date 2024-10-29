@@ -417,7 +417,10 @@ class UVProjection():
             cos_maps.append(zero_map)
         self.cos_maps = cos_maps
 
-    def generate_occluded_geometry(self):
+    def generate_occluded_geometry(self, threshold=0.2):
+        """
+        threshold: hit plane cuttoff for current_visible_faces / hit_1_visible_faces
+        """
         if self.occ_mesh is not None:
             return
         
@@ -429,6 +432,8 @@ class UVProjection():
         visible_faces_list = []
         self.visible_texture_map_list = []
         self.mesh_face_indices_list = []
+        
+        self.ignore_indices = []
         
         for k, camera in enumerate(self.cameras):
             R = camera.R.cpu().numpy()
@@ -443,8 +448,12 @@ class UVProjection():
 
             c2w = np.eye(4).astype(np.float32)[:3]
             raycast.prepare(image_height=512 * 3, image_width=512 * 3, c2w=c2w)
-            ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits * 2)   
+            ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits * 2)
             
+            # Check max hits that contain threshold; update max_hits if this max hits is larger than current max_hits
+            # Append mesh_face_indices
+            
+            # Run For loop of camera again with determined max_hits
             for i in range(self.max_hits):
                 # mesh_face_indexes = np.hstack([mesh_face_indices[i], np.array([mesh_face_indices[i][-1] for _ in range(faces.shape[0] - mesh_face_indices[i].shape[0])])])
                 idx = i * 2 if self.remove_backface_hits else i
@@ -453,6 +462,7 @@ class UVProjection():
                     # visible_faces = []
                     #visible_faces = faces[mesh_face_indices[0]]
                     mesh_face_indices[idx] = mesh_face_indices[0]
+                    self.ignore_indices.append(k * self.max_hits + i)
                 visible_faces = faces[mesh_face_indices[idx]]  # Only keep the visible faces
                 self.mesh_face_indices_list.append(torch.tensor(mesh_face_indices[idx], dtype=torch.int64, device='cuda'))
                 # Trimesh(vertices=vertices, faces=visible_faces).export(str(k)+"trans"+str(i)+".ply")
