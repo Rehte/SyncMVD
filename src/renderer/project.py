@@ -676,8 +676,7 @@ class UVProjection():
     # Bake views into a texture
     # First bake into individual textures then combine based on cosine weight
     @torch.enable_grad()
-    def bake_texture(self, views=None, main_views=[], cos_weighted=True, channels=None, exp=None, noisy=False, generator=None):
-        # TODO: Implement texture baking w/ occluded region
+    def bake_texture(self, views=None, main_views=[], cos_weighted=True, channels=None, exp=None, noisy=False, generator=None, hit=1):
         if not exp:
             exp=1
         if not channels:
@@ -707,6 +706,8 @@ class UVProjection():
                 mesh = self.occ_mesh[idx]
                 images_predicted = self.renderer(mesh, cameras=self.occ_cameras[idx], lights=self.lights, device=self.device)
                 predicted_rgb = images_predicted[..., :-1]
+                
+                # TODO: Fix views ordering taking into account hit parameter
                 loss += (((predicted_rgb[...] - views[idx]))**2).sum()
             loss.backward(retain_graph=False)
             optimizer.step()

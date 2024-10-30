@@ -275,7 +275,13 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         ]
         
         # Calculate in-group attention mask
-        self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views)
+        # self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views)
+        self.group_metas_2d = []
+        for i in range(self.max_hits):
+            indices = [i + j * self.max_hits for j in range(len(self.camera_poses))]
+            attention_mask = [self.attention_mask[idx] for idx in indices]
+            group_meta = split_groups(attention_mask, max_batch_size, ref_views)
+            group_metas.append(group_meta)
 
         # Save some VRAM
         # del _, cos_maps
@@ -503,7 +509,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         # 6. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
         latents = self.prepare_latents(
-            batch_size * self.max_hits,
+            batch_size,
             num_channels_latents,
             height,
             width,
@@ -567,170 +573,198 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = self.scheduler.scale_model_input(latents, t)
+                
+                noise_preds = []
+                for hit in range(self.max_hits):
+                    indices = [i * self.max_hits + hit for i in range(len(self.camera_poses))]
 
-                '''
-                    Use groups to manage prompt and results
-                    Make sure negative and positive prompt does not perform attention together
-                '''
-                prompt_embeds_groups = {"positive": positive_prompt_embeds}
-                result_groups = {}
-                if do_classifier_free_guidance:
-                    prompt_embeds_groups["negative"] = negative_prompt_embeds
+                    # Adjust attention_mask, conditioning_images, masks, etc., for the current hit
+                    attention_mask_hit = [self.attention_mask[i] for i in indices]
+                    conditioning_images_hit = conditioning_images[indices]
+                    masks_hit = masks[indices]
+                    positive_prompt_embeds_hit = positive_prompt_embeds[indices]
+                    negative_prompt_embeds_hit = negative_prompt_embeds[indices]
+                    
+                    self.group_metas = self.group_metas_2d[hit]
+                    
+                    '''
+                        Use groups to manage prompt and results
+                        Make sure negative and positive prompt does not perform attention together
+                    '''
+                    prompt_embeds_groups = {"positive": positive_prompt_embeds}
+                    result_groups = {}
+                    if do_classifier_free_guidance:
+                        prompt_embeds_groups["negative"] = negative_prompt_embeds
 
-                for prompt_tag, prompt_embeds in prompt_embeds_groups.items():
-                    if prompt_tag == "positive" or not guess_mode:
-                        # controlnet(s) inference
-                        control_model_input = latent_model_input
-                        controlnet_prompt_embeds = prompt_embeds
+                    for prompt_tag, prompt_embeds in prompt_embeds_groups.items():
+                        if prompt_tag == "positive" or not guess_mode:
+                            # controlnet(s) inference
+                            control_model_input = latent_model_input
+                            controlnet_prompt_embeds = prompt_embeds
 
 
-                        if isinstance(controlnet_keep[i], list):
-                            cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
+                            if isinstance(controlnet_keep[i], list):
+                                cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
+                            else:
+                                controlnet_cond_scale = controlnet_conditioning_scale
+                                if isinstance(controlnet_cond_scale, list):
+                                    controlnet_cond_scale = controlnet_cond_scale[0]
+                                cond_scale = controlnet_cond_scale * controlnet_keep[i]
+
+                            # Split into micro-batches according to group meta info
+                            # Ignore this feature for now
+                            down_block_res_samples_list = []
+                            mid_block_res_sample_list = []
+
+                            model_input_batches = [torch.index_select(control_model_input, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
+                            prompt_embeds_batches = [torch.index_select(controlnet_prompt_embeds, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
+                            conditioning_images_batches = [torch.index_select(conditioning_images, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
+
+                            for model_input_batch, prompt_embeds_batch, conditioning_images_batch \
+                                in zip (model_input_batches, prompt_embeds_batches, conditioning_images_batches):
+                                down_block_res_samples, mid_block_res_sample = self.controlnet(
+                                    model_input_batch,
+                                    t,
+                                    encoder_hidden_states=prompt_embeds_batch,
+                                    controlnet_cond=conditioning_images_batch,
+                                    conditioning_scale=cond_scale,
+                                    guess_mode=guess_mode,
+                                    return_dict=False,
+                                )
+                                down_block_res_samples_list.append(down_block_res_samples)
+                                mid_block_res_sample_list.append(mid_block_res_sample)
+
+                            ''' For the ith element of down_block_res_samples, concat the ith element of all mini-batch result '''
+                            model_input_batches = prompt_embeds_batches = conditioning_images_batches = None
+
+                            if guess_mode:
+                                for dbres in down_block_res_samples_list:
+                                    dbres_sizes = []
+                                    for res in dbres:
+                                        dbres_sizes.append(res.shape)
+                                    dbres_sizes_list.append(dbres_sizes)
+
+                                for mbres in mid_block_res_sample_list:
+                                    mbres_size_list.append(mbres.shape)
+
                         else:
-                            controlnet_cond_scale = controlnet_conditioning_scale
-                            if isinstance(controlnet_cond_scale, list):
-                                controlnet_cond_scale = controlnet_cond_scale[0]
-                            cond_scale = controlnet_cond_scale * controlnet_keep[i]
+                            # Infered ControlNet only for the conditional batch.
+                            # To apply the output of ControlNet to both the unconditional and conditional batches,
+                            # add 0 to the unconditional batch to keep it unchanged.
+                            # We copy the tensor shapes from a conditional batch
+                            down_block_res_samples_list = []
+                            mid_block_res_sample_list = []
+                            for dbres_sizes in dbres_sizes_list:
+                                down_block_res_samples_list.append([torch.zeros(shape, device=self._execution_device, dtype=latents.dtype) for shape in dbres_sizes])
+                            for mbres in mbres_size_list:
+                                mid_block_res_sample_list.append(torch.zeros(mbres, device=self._execution_device, dtype=latents.dtype))
+                            dbres_sizes_list = []
+                            mbres_size_list = []
 
-                        # Split into micro-batches according to group meta info
-                        # Ignore this feature for now
-                        down_block_res_samples_list = []
-                        mid_block_res_sample_list = []
 
-                        model_input_batches = [torch.index_select(control_model_input, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
-                        prompt_embeds_batches = [torch.index_select(controlnet_prompt_embeds, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
-                        conditioning_images_batches = [torch.index_select(conditioning_images, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
+                        '''
+                        
+                            predict the noise residual, split into mini-batches
+                            Downblock res samples has n samples, we split each sample into m batches
+                            and re group them into m lists of n mini batch samples.
+                        
+                        '''
+                        noise_pred_list = []
+                        model_input_batches = [torch.index_select(latent_model_input, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
+                        prompt_embeds_batches = [torch.index_select(prompt_embeds, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
 
-                        for model_input_batch, prompt_embeds_batch, conditioning_images_batch \
-                            in zip (model_input_batches, prompt_embeds_batches, conditioning_images_batches):
-                            down_block_res_samples, mid_block_res_sample = self.controlnet(
+                        for model_input_batch, prompt_embeds_batch, down_block_res_samples_batch, mid_block_res_sample_batch, meta \
+                            in zip(model_input_batches, prompt_embeds_batches, down_block_res_samples_list, mid_block_res_sample_list, self.group_metas):
+                            if t > num_timesteps * (1- ref_attention_end):
+                                replace_attention_processors(self.unet, SamplewiseAttnProcessor2_0, attention_mask=meta[2], ref_attention_mask=meta[3], ref_weight=1)
+                            else:
+                                replace_attention_processors(self.unet, SamplewiseAttnProcessor2_0, attention_mask=meta[2], ref_attention_mask=meta[3], ref_weight=0)
+
+                            noise_pred = self.unet(
                                 model_input_batch,
                                 t,
                                 encoder_hidden_states=prompt_embeds_batch,
-                                controlnet_cond=conditioning_images_batch,
-                                conditioning_scale=cond_scale,
-                                guess_mode=guess_mode,
+                                cross_attention_kwargs=cross_attention_kwargs,
+                                down_block_additional_residuals=down_block_res_samples_batch,
+                                mid_block_additional_residual=mid_block_res_sample_batch,
                                 return_dict=False,
-                            )
-                            down_block_res_samples_list.append(down_block_res_samples)
-                            mid_block_res_sample_list.append(mid_block_res_sample)
+                            )[0]
+                            noise_pred_list.append(noise_pred)
 
-                        ''' For the ith element of down_block_res_samples, concat the ith element of all mini-batch result '''
-                        model_input_batches = prompt_embeds_batches = conditioning_images_batches = None
+                        noise_pred_list = [torch.index_select(noise_pred, dim=0, index=torch.tensor(meta[1], device=self._execution_device)) for noise_pred, meta in zip(noise_pred_list, self.group_metas)]
+                        noise_pred = torch.cat(noise_pred_list, dim=0)
+                        down_block_res_samples_list = None
+                        mid_block_res_sample_list = None
+                        noise_pred_list = None
+                        model_input_batches = prompt_embeds_batches = down_block_res_samples_batches = mid_block_res_sample_batches = None
 
-                        if guess_mode:
-                            for dbres in down_block_res_samples_list:
-                                dbres_sizes = []
-                                for res in dbres:
-                                    dbres_sizes.append(res.shape)
-                                dbres_sizes_list.append(dbres_sizes)
+                        result_groups[prompt_tag] = noise_pred
 
-                            for mbres in mid_block_res_sample_list:
-                                mbres_size_list.append(mbres.shape)
 
+                    positive_noise_pred = result_groups["positive"]
+
+                    # perform guidance
+                    if do_classifier_free_guidance:
+                        noise_pred = result_groups["negative"] + guidance_scale * (positive_noise_pred - result_groups["negative"])
+
+
+                    if do_classifier_free_guidance and guidance_rescale > 0.0:
+                        # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+                        noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
+
+                    self.uvp.to(self._execution_device)
+                    # compute the previous noisy sample x_t -> x_t-1
+                    # Multi-View step or individual step
+                    current_exp = ((exp_end-exp_start) * i / num_inference_steps) + exp_start
+                    if t > (1-multiview_diffusion_end)*num_timesteps:
+                        step_results = step_tex(
+                            scheduler=self.scheduler, 
+                            uvp=self.uvp, 
+                            model_output=noise_pred, 
+                            timestep=t, 
+                            sample=latents, 
+                            texture=latent_tex,
+                            return_dict=True, 
+                            main_views=[], 
+                            exp= current_exp,
+                            hit=hit,
+                            **extra_step_kwargs
+                        )
+
+                        pred_original_sample = step_results["pred_original_sample"]
+                        latents = step_results["prev_sample"]
+                        latent_tex = step_results["prev_tex"]
+
+                        # Composit latent foreground with random color background
+                        background_latents = [self.color_latents[color] for color in background_colors]
+                        composited_tensor = composite_rendered_view(self.scheduler, background_latents, latents, masks, t)
+                        latents = composited_tensor.type(latents.dtype)
+
+                        intermediate_results.append((latents.to("cpu"), pred_original_sample.to("cpu")))
                     else:
-                        # Infered ControlNet only for the conditional batch.
-                        # To apply the output of ControlNet to both the unconditional and conditional batches,
-                        # add 0 to the unconditional batch to keep it unchanged.
-                        # We copy the tensor shapes from a conditional batch
-                        down_block_res_samples_list = []
-                        mid_block_res_sample_list = []
-                        for dbres_sizes in dbres_sizes_list:
-                            down_block_res_samples_list.append([torch.zeros(shape, device=self._execution_device, dtype=latents.dtype) for shape in dbres_sizes])
-                        for mbres in mbres_size_list:
-                            mid_block_res_sample_list.append(torch.zeros(mbres, device=self._execution_device, dtype=latents.dtype))
-                        dbres_sizes_list = []
-                        mbres_size_list = []
+                        step_results = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=True)
 
+                        pred_original_sample = step_results["pred_original_sample"]
+                        latents = step_results["prev_sample"]
+                        latent_tex = None
 
-                    '''
+                        intermediate_results.append((latents.to("cpu"), pred_original_sample.to("cpu")))
+
+                    del noise_pred, result_groups
                     
-                        predict the noise residual, split into mini-batches
-                        Downblock res samples has n samples, we split each sample into m batches
-                        and re group them into m lists of n mini batch samples.
-                    
-                    '''
-                    noise_pred_list = []
-                    model_input_batches = [torch.index_select(latent_model_input, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
-                    prompt_embeds_batches = [torch.index_select(prompt_embeds, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
+                    if hit < self.max_hits:
+                        # Extract the texture map
+                        result_tex_rgb, _ = get_rgb_texture(self.vae, self.uvp_rgb, latents)
 
-                    for model_input_batch, prompt_embeds_batch, down_block_res_samples_batch, mid_block_res_sample_batch, meta \
-                        in zip(model_input_batches, prompt_embeds_batches, down_block_res_samples_list, mid_block_res_sample_list, self.group_metas):
-                        if t > num_timesteps * (1- ref_attention_end):
-                            replace_attention_processors(self.unet, SamplewiseAttnProcessor2_0, attention_mask=meta[2], ref_attention_mask=meta[3], ref_weight=1)
-                        else:
-                            replace_attention_processors(self.unet, SamplewiseAttnProcessor2_0, attention_mask=meta[2], ref_attention_mask=meta[3], ref_weight=0)
+                        # Encode the texture map into latents
+                        texture_map = result_tex_rgb.unsqueeze(0).to(self._execution_device)
+                        latents = self.vae.encode(texture_map).latent_dist.sample()
+                        latents = latents * self.vae.config.scaling_factor
 
-                        noise_pred = self.unet(
-                            model_input_batch,
-                            t,
-                            encoder_hidden_states=prompt_embeds_batch,
-                            cross_attention_kwargs=cross_attention_kwargs,
-                            down_block_additional_residuals=down_block_res_samples_batch,
-                            mid_block_additional_residual=mid_block_res_sample_batch,
-                            return_dict=False,
-                        )[0]
-                        noise_pred_list.append(noise_pred)
-
-                    noise_pred_list = [torch.index_select(noise_pred, dim=0, index=torch.tensor(meta[1], device=self._execution_device)) for noise_pred, meta in zip(noise_pred_list, self.group_metas)]
-                    noise_pred = torch.cat(noise_pred_list, dim=0)
-                    down_block_res_samples_list = None
-                    mid_block_res_sample_list = None
-                    noise_pred_list = None
-                    model_input_batches = prompt_embeds_batches = down_block_res_samples_batches = mid_block_res_sample_batches = None
-
-                    result_groups[prompt_tag] = noise_pred
-
-
-                positive_noise_pred = result_groups["positive"]
-
-                # perform guidance
-                if do_classifier_free_guidance:
-                    noise_pred = result_groups["negative"] + guidance_scale * (positive_noise_pred - result_groups["negative"])
-
-
-                if do_classifier_free_guidance and guidance_rescale > 0.0:
-                    # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
-                    noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
-
-                self.uvp.to(self._execution_device)
-                # compute the previous noisy sample x_t -> x_t-1
-                # Multi-View step or individual step
-                current_exp = ((exp_end-exp_start) * i / num_inference_steps) + exp_start
-                if t > (1-multiview_diffusion_end)*num_timesteps:
-                    step_results = step_tex(
-                        scheduler=self.scheduler, 
-                        uvp=self.uvp, 
-                        model_output=noise_pred, 
-                        timestep=t, 
-                        sample=latents, 
-                        texture=latent_tex,
-                        return_dict=True, 
-                        main_views=[], 
-                        exp= current_exp,
-                        **extra_step_kwargs
-                    )
-
-                    pred_original_sample = step_results["pred_original_sample"]
-                    latents = step_results["prev_sample"]
-                    latent_tex = step_results["prev_tex"]
-
-                    # Composit latent foreground with random color background
-                    background_latents = [self.color_latents[color] for color in background_colors]
-                    composited_tensor = composite_rendered_view(self.scheduler, background_latents, latents, masks, t)
-                    latents = composited_tensor.type(latents.dtype)
-
-                    intermediate_results.append((latents.to("cpu"), pred_original_sample.to("cpu")))
-                else:
-                    step_results = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=True)
-
-                    pred_original_sample = step_results["pred_original_sample"]
-                    latents = step_results["prev_sample"]
-                    latent_tex = None
-
-                    intermediate_results.append((latents.to("cpu"), pred_original_sample.to("cpu")))
-
-                del noise_pred, result_groups
+                        # Perform DDIM inversion
+                        for t in reversed(self.scheduler.timesteps):
+                            noise_pred = self.unet(latents, t, encoder_hidden_states=positive_prompt_embeds).sample
+                            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
                     
 
 

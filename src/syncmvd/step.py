@@ -22,7 +22,8 @@ def step_tex(
 		main_views = [],
 		hires_original_views = True,
 		exp=None,
-		cos_weighted=True
+		cos_weighted=True,
+        hit=1,
 ):
 	t = timestep
 
@@ -79,7 +80,7 @@ def step_tex(
 
 
 	original_views = [view for view in pred_original_sample]
-	original_views, original_tex, visibility_weights = uvp.bake_texture(views=original_views, main_views=main_views, exp=exp)
+	original_views, original_tex, visibility_weights = uvp.bake_texture(views=original_views, main_views=main_views, exp=exp, hit=hit)
 	uvp.set_texture_map(original_tex)
 	original_views = uvp.render_textured_views()
 	original_views = torch.stack(original_views, axis=0)[:,:-1,...]
