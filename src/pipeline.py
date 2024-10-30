@@ -257,6 +257,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         # A forward view will be used if not specified
         if len(ref_views) == 0:
             ref_views = [front_view_idx*self.max_hits]
+            
+        # TODO: Fix attention mask for sequential denoising and group metas setting
         
         self.attention_mask = [
             [element * self.max_hits for element in mask] for mask in self.attention_mask
