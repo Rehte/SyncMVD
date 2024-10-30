@@ -154,7 +154,7 @@ class UVProjection():
 
         self.remove_backface_hits = True
         self.occ_mesh = None
-        self.hit_max_sampling = 5
+        self.hit_max_sampling = 4
 
 
     # Load obj mesh, rescale the mesh to fit into the bounding box
