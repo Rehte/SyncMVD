@@ -185,12 +185,9 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
             max_batch_size=4,
             logging_config=None,
-            max_hits=2,
         ):
         # Make output dir
         output_dir = logging_config["output_dir"]
-  
-        self.max_hits = max_hits
 
         self.result_dir = f"{output_dir}/results"
         self.intermediate_dir = f"{output_dir}/intermediate"
@@ -236,11 +233,31 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
             self.attention_mask.append([cam_count, cam_count+1, cam_count+2])
             self.attention_mask.append([cam_count, cam_count+1, cam_count+2])
 
+
+        # Set up pytorch3D for projection between screen space and UV space
+        # uvp is for latent and uvp_rgb for rgb color
+        self.uvp = UVP(texture_size=texture_size, render_size=latent_size, sampling_mode="nearest", channels=4, device=self._execution_device)
+        if mesh_path.lower().endswith(".obj"):
+            self.uvp.load_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
+        elif mesh_path.lower().endswith(".glb"):
+            self.uvp.load_glb_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
+        else:
+            assert False, "The mesh file format is not supported. Use .obj or .glb."
+        self.uvp.set_cameras_and_render_settings(self.camera_poses, centers=camera_centers, camera_distance=4.0)
+
+
+        self.uvp_rgb = UVP(texture_size=texture_rgb_size, render_size=render_rgb_size, sampling_mode="nearest", channels=3, device=self._execution_device)
+        self.uvp_rgb.mesh = self.uvp.mesh.clone()
+        self.uvp_rgb.set_cameras_and_render_settings(self.camera_poses, centers=camera_centers, camera_distance=4.0)
+        
+        self.max_hits = self.uvp.max_hits
+        print(f"Max hits: {self.max_hits}")
+        
         # Reference view for attention (all views attend the the views in this list)
         # A forward view will be used if not specified
         if len(ref_views) == 0:
             ref_views = [front_view_idx*self.max_hits]
-
+        
         self.attention_mask = [
             [element * self.max_hits for element in mask] for mask in self.attention_mask
         ]
@@ -251,44 +268,14 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
                 mask = attention_mask[j]
                 incremented_masks = [element + i for element in mask]
                 self.attention_mask.insert(self.max_hits * j + i, incremented_masks)
-
-        # for i in range(1, self.max_hits):
-        #     incremented_masks = [
-        #         [element + i for element in mask] for mask in attention_mask
-        #     ]
-        #     self.attention_mask.extend(incremented_masks)
-            
-        # Add attention between hit planes
-        # if self.max_hits > 1:
-        #     for i in range(cam_count):
-        #         ray_indices = [i*self.max_hits+j for j in range(self.max_hits)]
-        #         for j in range(self.max_hits):
-        #             current_index = i * self.max_hits + j
-        #             ray_indices_copy = ray_indices.copy()
-        #             ray_indices_copy.remove(current_index)
-        #             self.attention_mask[current_index].extend(ray_indices_copy)
-
+        
+        # Remove cameras indices in attention masks that are one of the ignored indices
+        self.attention_mask = [
+            [idx for idx in mask if idx not in self.uvp.ignore_indices] for mask in self.attention_mask
+        ]
+        
         # Calculate in-group attention mask
         self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views)
-
-
-        # Set up pytorch3D for projection between screen space and UV space
-        # uvp is for latent and uvp_rgb for rgb color
-        self.uvp = UVP(texture_size=texture_size, render_size=latent_size, sampling_mode="nearest", channels=4, device=self._execution_device, max_hits=self.max_hits)
-        if mesh_path.lower().endswith(".obj"):
-            self.uvp.load_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
-        elif mesh_path.lower().endswith(".glb"):
-            self.uvp.load_glb_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
-        else:
-            assert False, "The mesh file format is not supported. Use .obj or .glb."
-        self.uvp.set_cameras_and_render_settings(self.camera_poses, centers=camera_centers, camera_distance=4.0)
-
-
-        self.uvp_rgb = UVP(texture_size=texture_rgb_size, render_size=render_rgb_size, sampling_mode="nearest", channels=3, device=self._execution_device, max_hits=self.max_hits)
-        self.uvp_rgb.mesh = self.uvp.mesh.clone()
-        self.uvp_rgb.set_cameras_and_render_settings(self.camera_poses, centers=camera_centers, camera_distance=4.0)
-        # _,_,_,cos_maps,_, _ = self.uvp_rgb.render_geometry()
-        # self.uvp_rgb.calculate_cos_angle_weights(cos_maps, fill=False)
 
         # Save some VRAM
         # del _, cos_maps
@@ -364,7 +351,6 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
         logging_config=None,
         cond_type="depth",
-        max_hits=2,
         style_prompt=None,
     ):
         
@@ -386,7 +372,6 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
                 max_batch_size=max_batch_size,
 
                 logging_config=logging_config,
-                max_hits=max_hits,
             )
 
 

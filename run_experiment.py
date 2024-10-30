@@ -81,57 +81,57 @@ syncmvd = StableSyncMVDPipeline(**pipe.components)
 
 total_textured_views = []
 
-hits = [1] if opt.max_hits == 1 else list(set([1, opt.max_hits]))
+# hits = [1] if opt.max_hits == 1 else list(set([1, opt.max_hits]))
 
-if opt.disable_base_hit:
-    hits = [opt.max_hits]
+# if opt.disable_base_hit:
+#     hits = [opt.max_hits]
 
-print(f"Max hits: {opt.max_hits}, Hits: {hits}")
+# print(f"Max hits: {opt.max_hits}, Hits: {hits}")
 
-for max_hit in hits:
-    print(f"Running with max_hit={max_hit}")
-    result_tex_rgb, textured_views, v = syncmvd(
-        prompt=opt.prompt,
-        height=opt.latent_view_size*8,
-        width=opt.latent_view_size*8,
-        num_inference_steps=opt.steps,
-        guidance_scale=opt.guidance_scale,
-        negative_prompt=opt.negative_prompt,
-        
-        generator=torch.manual_seed(opt.seed),
-        max_batch_size=64,
-        controlnet_guess_mode=opt.guess_mode,
-        controlnet_conditioning_scale = opt.conditioning_scale,
-        controlnet_conditioning_end_scale= opt.conditioning_scale_end,
-        control_guidance_start= opt.control_guidance_start,
-        control_guidance_end = opt.control_guidance_end,
-        guidance_rescale = opt.guidance_rescale,
-        use_directional_prompt=True,
-
-        mesh_path=mesh_path,
-        mesh_transform={"scale":opt.mesh_scale},
-        mesh_autouv=not opt.keep_mesh_uv,
-
-        camera_azims=opt.camera_azims,
-        top_cameras=not opt.no_top_cameras,
-        texture_size=opt.latent_tex_size,
-        render_rgb_size=opt.rgb_view_size,
-        texture_rgb_size=opt.rgb_tex_size,
-        multiview_diffusion_end=opt.mvd_end,
-        exp_start=opt.mvd_exp_start,
-        exp_end=opt.mvd_exp_end,
-        ref_attention_end=opt.ref_attention_end,
-        shuffle_background_change=opt.shuffle_bg_change,
-        shuffle_background_end=opt.shuffle_bg_end,
-
-        logging_config=logging_config,
-        cond_type=opt.cond_type,
-        max_hits=max_hit,
-        style_prompt=opt.style_prompt
-    )
+# for max_hit in hits:
+#     print(f"Running with max_hit={max_hit}")
+result_tex_rgb, textured_views, v = syncmvd(
+    prompt=opt.prompt,
+    height=opt.latent_view_size*8,
+    width=opt.latent_view_size*8,
+    num_inference_steps=opt.steps,
+    guidance_scale=opt.guidance_scale,
+    negative_prompt=opt.negative_prompt,
     
-    textured_views = [textured_view.permute(1,2,0).cpu().numpy() for textured_view in textured_views]
-    total_textured_views.append(textured_views)
+    generator=torch.manual_seed(opt.seed),
+    max_batch_size=64,
+    controlnet_guess_mode=opt.guess_mode,
+    controlnet_conditioning_scale = opt.conditioning_scale,
+    controlnet_conditioning_end_scale= opt.conditioning_scale_end,
+    control_guidance_start= opt.control_guidance_start,
+    control_guidance_end = opt.control_guidance_end,
+    guidance_rescale = opt.guidance_rescale,
+    use_directional_prompt=True,
+
+    mesh_path=mesh_path,
+    mesh_transform={"scale":opt.mesh_scale},
+    mesh_autouv=not opt.keep_mesh_uv,
+
+    camera_azims=opt.camera_azims,
+    top_cameras=not opt.no_top_cameras,
+    texture_size=opt.latent_tex_size,
+    render_rgb_size=opt.rgb_view_size,
+    texture_rgb_size=opt.rgb_tex_size,
+    multiview_diffusion_end=opt.mvd_end,
+    exp_start=opt.mvd_exp_start,
+    exp_end=opt.mvd_exp_end,
+    ref_attention_end=opt.ref_attention_end,
+    shuffle_background_change=opt.shuffle_bg_change,
+    shuffle_background_end=opt.shuffle_bg_end,
+
+    logging_config=logging_config,
+    cond_type=opt.cond_type,
+    # max_hits=max_hit,
+    style_prompt=opt.style_prompt
+)
+
+textured_views = [textured_view.permute(1,2,0).cpu().numpy() for textured_view in textured_views]
+total_textured_views.append(textured_views)
 
 
 

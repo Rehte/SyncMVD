@@ -144,7 +144,7 @@ def ray_cast_mesh(mesh, rays_origins, ray_directions):
 # Stable Diffusion has 4 latent channels so use channels=4
 
 class UVProjection():
-    def __init__(self, texture_size=96, render_size=64, sampling_mode="nearest", channels=3, device=None, max_hits = 2):
+    def __init__(self, texture_size=96, render_size=64, sampling_mode="nearest", channels=3, device=None):
         self.channels = channels
         self.device = device or torch.device("cpu")
         self.lights = AmbientLights(ambient_color=((1.0,)*channels,), device=self.device)
@@ -152,7 +152,6 @@ class UVProjection():
         self.render_size = render_size
         self.sampling_mode = sampling_mode
 
-        self.max_hits = max_hits
         self.remove_backface_hits = True
         self.occ_mesh = None
 
@@ -417,7 +416,7 @@ class UVProjection():
             cos_maps.append(zero_map)
         self.cos_maps = cos_maps
 
-    def generate_occluded_geometry(self, threshold=0.2):
+    def generate_occluded_geometry(self, threshold=0.1):
         """
         threshold: hit plane cuttoff for current_visible_faces / hit_1_visible_faces
         """
@@ -432,8 +431,10 @@ class UVProjection():
         visible_faces_list = []
         self.visible_texture_map_list = []
         self.mesh_face_indices_list = []
+        self.mesh_face_indices_2d_list = []
         
         self.ignore_indices = []
+        self.max_hits = 1
         
         for k, camera in enumerate(self.cameras):
             R = camera.R.cpu().numpy()
@@ -450,17 +451,29 @@ class UVProjection():
             raycast.prepare(image_height=512 * 3, image_width=512 * 3, c2w=c2w)
             ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits * 2)
             
-            # Check max hits that contain threshold; update max_hits if this max hits is larger than current max_hits
-            # Append mesh_face_indices
+            self.mesh_face_indices_2d_list.append(mesh_face_indices)
+            max_visible_faces = len(mesh_face_indices[0])
+            
+            max_hit = 1
+            while max_hit < len(mesh_face_indices) // 2:
+                idx = max_hit * 2 if self.remove_backface_hits else max_hit
+                if len(mesh_face_indices[idx]) / max_visible_faces < threshold:
+                    break
+                max_hit += 1
+                
+            if max_hit > self.max_hits:
+                self.max_hits = max_hit
+            
+        
+        for k, camera in enumerate(self.cameras):
+            mesh_face_indices = self.mesh_face_indices_2d_list[k]
             
             # Run For loop of camera again with determined max_hits
             for i in range(self.max_hits):
                 # mesh_face_indexes = np.hstack([mesh_face_indices[i], np.array([mesh_face_indices[i][-1] for _ in range(faces.shape[0] - mesh_face_indices[i].shape[0])])])
                 idx = i * 2 if self.remove_backface_hits else i
-                if len(mesh_face_indices[idx]) == 0:
-                    print(f"No visible faces for camera {k} hit {i}")
-                    # visible_faces = []
-                    #visible_faces = faces[mesh_face_indices[0]]
+                if idx > len(mesh_face_indices) - 1 or len(mesh_face_indices[idx]) / len(mesh_face_indices[0]) < threshold:
+                    print(f"Few visible faces for camera {k} hit {i}")
                     mesh_face_indices[idx] = mesh_face_indices[0]
                     self.ignore_indices.append(k * self.max_hits + i)
                 visible_faces = faces[mesh_face_indices[idx]]  # Only keep the visible faces
@@ -684,10 +697,13 @@ class UVProjection():
             optimizer.zero_grad()
             loss = 0
             for i in range(len(self.occ_mesh) // self.max_hits):
-                mesh = self.occ_mesh[self.max_hits * i + j]
-                images_predicted = self.renderer(mesh, cameras=self.occ_cameras[self.max_hits * i + j], lights=self.lights, device=self.device)
+                idx = i * self.max_hits + j
+                if idx in self.ignore_indices:
+                    continue
+                mesh = self.occ_mesh[idx]
+                images_predicted = self.renderer(mesh, cameras=self.occ_cameras[idx], lights=self.lights, device=self.device)
                 predicted_rgb = images_predicted[..., :-1]
-                loss += (((predicted_rgb[...] - views[self.max_hits * i + j]))**2).sum()
+                loss += (((predicted_rgb[...] - views[idx]))**2).sum()
             loss.backward(retain_graph=False)
             optimizer.step()
         
