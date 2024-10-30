@@ -271,7 +271,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         
         # Remove cameras indices in attention masks that are one of the ignored indices
         self.attention_mask = [
-            [idx for idx in mask if idx not in self.uvp.ignore_indices] for mask in self.attention_mask
+            [idx for idx in mask if idx not in self.uvp.ignore_indices or idx == i] for i, mask in enumerate(self.attention_mask)
         ]
         
         # Calculate in-group attention mask

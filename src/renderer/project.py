@@ -154,6 +154,7 @@ class UVProjection():
 
         self.remove_backface_hits = True
         self.occ_mesh = None
+        self.hit_max_sampling = 5
 
 
     # Load obj mesh, rescale the mesh to fit into the bounding box
@@ -416,7 +417,7 @@ class UVProjection():
             cos_maps.append(zero_map)
         self.cos_maps = cos_maps
 
-    def generate_occluded_geometry(self, threshold=0.1):
+    def generate_occluded_geometry(self, threshold=0.2):
         """
         threshold: hit plane cuttoff for current_visible_faces / hit_1_visible_faces
         """
@@ -449,15 +450,18 @@ class UVProjection():
 
             c2w = np.eye(4).astype(np.float32)[:3]
             raycast.prepare(image_height=512 * 3, image_width=512 * 3, c2w=c2w)
-            ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.max_hits * 2)
+            ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.hit_max_sampling * 2)
             
             self.mesh_face_indices_2d_list.append(mesh_face_indices)
             max_visible_faces = len(mesh_face_indices[0])
             
             max_hit = 1
+            # print(f"Camera {k} has {len(mesh_face_indices)} hits")
             while max_hit < len(mesh_face_indices) // 2:
                 idx = max_hit * 2 if self.remove_backface_hits else max_hit
-                if len(mesh_face_indices[idx]) / max_visible_faces < threshold:
+                face_coverage = len(mesh_face_indices[idx]) / max_visible_faces
+                print(f"Face coverage for camera {k} hit {max_hit+1}: {face_coverage}")
+                if face_coverage < threshold:
                     break
                 max_hit += 1
                 
