@@ -259,22 +259,30 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
             ref_views = [front_view_idx*self.max_hits]
             
         # TODO: Fix attention mask for sequential denoising and group metas setting
-        
-        self.attention_mask = [
-            [element * self.max_hits for element in mask] for mask in self.attention_mask
-        ]
-        attention_mask = self.attention_mask.copy()
+        # self.attention_mask = [
+        #     [element * self.max_hits for element in mask] for mask in self.attention_mask
+        # ]
+        # attention_mask = self.attention_mask.copy()
 
-        for j in range(len(attention_mask)):
-            for i in range(1, self.max_hits):            
-                mask = attention_mask[j]
-                incremented_masks = [element + i for element in mask]
-                self.attention_mask.insert(self.max_hits * j + i, incremented_masks)
+        # for j in range(len(attention_mask)):
+        #     for i in range(1, self.max_hits):            
+        #         mask = attention_mask[j]
+        #         incremented_masks = [element + i for element in mask]
+        #         self.attention_mask.insert(self.max_hits * j + i, incremented_masks)
+
+        self.attention_masks = [
+            attention_mask.copy() for i in range(self.max_hits)
+        ]
+
+        self.attention_masks = [
+            [idx for idx in mask if idx*self.max_hits+h not in self.uvp.ignore_indices or idx == i]
+            for h, attention_mask_ in enumerate(self.attention_masks) for i, mask in enumerate(attention_mask_)
+        ]
         
         # Remove cameras indices in attention masks that are one of the ignored indices
-        self.attention_mask = [
-            [idx for idx in mask if idx not in self.uvp.ignore_indices or idx == i] for i, mask in enumerate(self.attention_mask)
-        ]
+        # self.attention_mask = [
+        #     [idx for idx in mask if idx not in self.uvp.ignore_indices or idx == i] for i, mask in enumerate(self.attention_mask)
+        # ]
         
         # Calculate in-group attention mask
         # self.group_metas = split_groups(self.attention_mask, max_batch_size, ref_views)
@@ -282,8 +290,8 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         for i in range(self.max_hits):
             indices = [i + j * self.max_hits for j in range(len(self.camera_poses))]
             attention_mask = [self.attention_mask[idx] for idx in indices]
-            group_meta = split_groups(attention_mask, max_batch_size, ref_views)
-            group_metas.append(group_meta)
+            group_meta = split_groups(self.attention_masks[i], max_batch_size, ref_views)
+            self.group_metas_2d.append(group_meta)
 
         # Save some VRAM
         # del _, cos_maps
@@ -546,7 +554,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         intermediate_results = []
-        background_colors = [random.choice(list(color_constants.keys())) for i in range(len(self.camera_poses) * self.max_hits)]
+        background_colors = [random.choice(list(color_constants.keys())) for i in range(len(self.camera_poses))]
         dbres_sizes_list = []
         mbres_size_list = []
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -593,10 +601,10 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
                         Use groups to manage prompt and results
                         Make sure negative and positive prompt does not perform attention together
                     '''
-                    prompt_embeds_groups = {"positive": positive_prompt_embeds}
+                    prompt_embeds_groups = {"positive": positive_prompt_embeds_hit}
                     result_groups = {}
                     if do_classifier_free_guidance:
-                        prompt_embeds_groups["negative"] = negative_prompt_embeds
+                        prompt_embeds_groups["negative"] = negative_prompt_embeds_hit
 
                     for prompt_tag, prompt_embeds in prompt_embeds_groups.items():
                         if prompt_tag == "positive" or not guess_mode:
@@ -620,7 +628,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
                             model_input_batches = [torch.index_select(control_model_input, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
                             prompt_embeds_batches = [torch.index_select(controlnet_prompt_embeds, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
-                            conditioning_images_batches = [torch.index_select(conditioning_images, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
+                            conditioning_images_batches = [torch.index_select(conditioning_images_hit, dim=0, index=torch.tensor(meta[0], device=self._execution_device)) for meta in self.group_metas]
 
                             for model_input_batch, prompt_embeds_batch, conditioning_images_batch \
                                 in zip (model_input_batches, prompt_embeds_batches, conditioning_images_batches):
@@ -739,7 +747,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
                         # Composit latent foreground with random color background
                         background_latents = [self.color_latents[color] for color in background_colors]
-                        composited_tensor = composite_rendered_view(self.scheduler, background_latents, latents, masks, t)
+                        composited_tensor = composite_rendered_view(self.scheduler, background_latents, latents, masks_hit, t)
                         latents = composited_tensor.type(latents.dtype)
 
                         intermediate_results.append((latents.to("cpu"), pred_original_sample.to("cpu")))
@@ -754,6 +762,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
                     del noise_pred, result_groups
                     
+                    # Set initial latent via DDIM inversion from texture map (or rendered image)
                     if hit < self.max_hits:
                         # Extract the texture map
                         result_tex_rgb, _ = get_rgb_texture(self.vae, self.uvp_rgb, latents)
