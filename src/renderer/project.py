@@ -336,6 +336,9 @@ class UVProjection():
         R, T = look_at_view_transform(dist=camera_distance, elev=elev, azim=azim, at=centers or ((0,0,0),))
         self.cameras = FoVOrthographicCameras(device=self.device, R=R, T=T, scale_xyz=scale or ((1,1,1),))
 
+    def set_cameras_and_selection(self, camera_poses, centers=None, camera_distance=2.7, scale=None):
+        self.set_cameras(camera_poses, centers, camera_distance, scale=scale)
+        self.generate_occluded_geometry()
 
     # Set all necessary internal data for rendering and texture baking
     # Can be used to refresh after changing camera positions
@@ -436,6 +439,7 @@ class UVProjection():
         
         self.ignore_indices = []
         self.max_hits = 1
+        self.primary_visible_faces = set()
         
         for k, camera in enumerate(self.cameras):
             R = camera.R.cpu().numpy()
@@ -455,6 +459,9 @@ class UVProjection():
             self.mesh_face_indices_2d_list.append(mesh_face_indices)
             max_visible_faces = len(mesh_face_indices[0])
             
+            if k <= len(self.cameras) // 2:
+                self.primary_visible_faces.update(mesh_face_indices[0])
+            
             max_hit = 1
             # print(f"Camera {k} has {len(mesh_face_indices)} hits")
             while max_hit < len(mesh_face_indices) // 2:
@@ -463,14 +470,19 @@ class UVProjection():
                 print(f"Face coverage for camera {k} hit {max_hit+1}: {face_coverage}")
                 if face_coverage < threshold:
                     break
+                if k <= len(self.cameras) // 2:
+                    self.primary_visible_faces.update(mesh_face_indices[idx])
                 max_hit += 1
                 
             if max_hit > self.max_hits:
                 self.max_hits = max_hit
-            
+        
+        self.camera_scores = []
         
         for k, camera in enumerate(self.cameras):
             mesh_face_indices = self.mesh_face_indices_2d_list[k]
+            
+            total_visible_faces = set()
             
             # Run For loop of camera again with determined max_hits
             for i in range(self.max_hits):
@@ -480,6 +492,8 @@ class UVProjection():
                     print(f"Few visible faces for camera {k} hit {i}")
                     mesh_face_indices[idx] = mesh_face_indices[0]
                     self.ignore_indices.append(k * self.max_hits + i)
+                else:
+                    total_visible_faces.update(mesh_face_indices[idx])
                 visible_faces = faces[mesh_face_indices[idx]]  # Only keep the visible faces
                 self.mesh_face_indices_list.append(torch.tensor(mesh_face_indices[idx], dtype=torch.int64, device='cuda'))
                 # Trimesh(vertices=vertices, faces=visible_faces).export(str(k)+"trans"+str(i)+".ply")
@@ -488,6 +502,9 @@ class UVProjection():
                 visible_faces_list.append(visible_faces)
                 new_map = torch.zeros(self.target_size+(self.channels,), device=self.device)
                 self.visible_texture_map_list.append(self.mesh.textures.faces_uvs_padded()[0, mesh_face_indices[idx]])
+                
+            if k > len(self.cameras) // 2:
+                self.camera_scores.append(len(total_visible_faces - self.primary_visible_faces))
         
         textures = TexturesUV(
             [new_map] * len(self.cameras) * self.max_hits, 
@@ -696,21 +713,21 @@ class UVProjection():
             )
         self.occ_mesh.textures = new_tex
         
-        for j in range(self.max_hits):
-            optimizer.zero_grad()
-            loss = 0
-            for i in range(len(self.occ_mesh) // self.max_hits):
-                idx = i * self.max_hits + j
-                if idx in self.ignore_indices:
-                    continue
-                mesh = self.occ_mesh[idx]
-                images_predicted = self.renderer(mesh, cameras=self.occ_cameras[idx], lights=self.lights, device=self.device)
-                predicted_rgb = images_predicted[..., :-1]
-                
-                # TODO: Fix views ordering taking into account hit parameter
-                loss += (((predicted_rgb[...] - views[idx]))**2).sum()
-            loss.backward(retain_graph=False)
-            optimizer.step()
+        
+        optimizer.zero_grad()
+        loss = 0
+        for i in range(len(self.occ_mesh) // self.max_hits):
+            idx = i * self.max_hits + hit
+            if idx in self.ignore_indices:
+                continue
+            mesh = self.occ_mesh[idx]
+            images_predicted = self.renderer(mesh, cameras=self.occ_cameras[idx], lights=self.lights, device=self.device)
+            predicted_rgb = images_predicted[..., :-1]
+            
+            # TODO: Fix views ordering taking into account hit parameter
+            loss += (((predicted_rgb[...] - views[idx]))**2).sum()
+        loss.backward(retain_graph=False)
+        optimizer.step()
         
         # for i, mesh in enumerate(self.occ_mesh):
         #     images_predicted = self.renderer(mesh, cameras=self.occ_cameras[i], lights=self.lights, device=self.device)

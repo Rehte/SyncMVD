@@ -185,6 +185,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
 
             max_batch_size=4,
             logging_config=None,
+            dynamic_camera_selection=False,
         ):
         # Make output dir
         output_dir = logging_config["output_dir"]
@@ -223,15 +224,32 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         # Add two additional cameras for painting the top surfaces
         if top_cameras:
             self.camera_poses.append((90, 0))
-            self.camera_poses.append((30, 0))
-            self.camera_poses.append((30, 180))
-
-            # self.attention_mask.append([front_view_idx, cam_count])
-            # self.attention_mask.append([back_view_idx, cam_count+1])
-            
-            self.attention_mask.append([cam_count, cam_count+1, cam_count+2])
-            self.attention_mask.append([cam_count, cam_count+1, cam_count+2])
-            self.attention_mask.append([cam_count, cam_count+1, cam_count+2])
+            self.attention_mask.append([cam_count])
+        
+        # TODO: Init Potential Camera Views
+        if dynamic_camera_selection:
+            new_cam_count = cam_count * 2 + 1 if top_cameras else cam_count * 2
+            elevation = 30
+            for i, azim in enumerate(camera_azims):
+                if azim < 0:
+                    azim += 360
+                self.camera_poses.append((elevation, azim))
+                idx = i + cam_count + 1
+                self.attention_mask.append([(cam_count+i-1)%cam_count+cam_count+1, idx, (i+1)%cam_count+cam_count+1])
+        
+        # TODO: Initialize uvp and select Camera Views
+        self.uvp_tmp = UVP(texture_size=texture_size, render_size=latent_size, sampling_mode="nearest", channels=4, device=self._execution_device)
+        if mesh_path.lower().endswith(".obj"):
+            self.uvp_tmp.load_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
+        elif mesh_path.lower().endswith(".glb"):
+            self.uvp_tmp.load_glb_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
+        else:
+            assert False, "The mesh file format is not supported. Use .obj or .glb."
+        self.uvp_tmp.set_cameras_and_selection(self.camera_poses, centers=camera_centers, camera_distance=4.0)
+        # TODO: Initialize New list with Dynamic Selection of Camera Views
+        
+        
+        # TODO: Initialize New UVP with Dynamic Camera Views
 
 
         # Set up pytorch3D for projection between screen space and UV space
