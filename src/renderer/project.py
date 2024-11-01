@@ -339,6 +339,16 @@ class UVProjection():
     def set_cameras_and_selection(self, camera_poses, centers=None, camera_distance=2.7, scale=None):
         self.set_cameras(camera_poses, centers, camera_distance, scale=scale)
         self.generate_occluded_geometry()
+        
+        remaining = self.mesh.faces_packed().shape[0] - len(self.primary_visible_faces)
+        
+        # Select the views that covers at least 10% of the remaining faces
+        selected_views_ids = []
+        for i, score in enumerate(self.camera_scores):
+            if score > remaining * 0.1:
+                selected_views_ids.append(i)
+        selected_views = [i+len(self.cameras)//2+1 for i in selected_views_ids]
+        return selected_views
 
     # Set all necessary internal data for rendering and texture baking
     # Can be used to refresh after changing camera positions

@@ -245,9 +245,10 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
             self.uvp_tmp.load_glb_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
         else:
             assert False, "The mesh file format is not supported. Use .obj or .glb."
-        self.uvp_tmp.set_cameras_and_selection(self.camera_poses, centers=camera_centers, camera_distance=4.0)
-        # TODO: Initialize New list with Dynamic Selection of Camera Views
-        
+        selected_views = self.uvp_tmp.set_cameras_and_selection(self.camera_poses, centers=camera_centers, camera_distance=4.0)
+        # TODO: Initialize New cameras list with Dynamic Selection of Camera Views
+        # self.camera_poses = self.camera_poses[selected_views]
+        # self.attention_mask = self.attention_mask[selected_views]
         
         # TODO: Initialize New UVP with Dynamic Camera Views
 
