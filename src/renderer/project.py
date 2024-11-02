@@ -348,7 +348,7 @@ class UVProjection():
             if score > remaining * 0.1:
                 selected_views_ids.append(i)
         selected_views = [i+len(self.cameras)//2+1 for i in selected_views_ids]
-        return selected_views
+        return [i for i in range(len(self.cameras)//2+1)] + selected_views
 
     # Set all necessary internal data for rendering and texture baking
     # Can be used to refresh after changing camera positions
@@ -430,7 +430,7 @@ class UVProjection():
             cos_maps.append(zero_map)
         self.cos_maps = cos_maps
 
-    def generate_occluded_geometry(self, threshold=0.2):
+    def generate_occluded_geometry(self, threshold=0.2, get_scores=False):
         """
         threshold: hit plane cuttoff for current_visible_faces / hit_1_visible_faces
         """
@@ -467,6 +467,7 @@ class UVProjection():
             ray_indexes, points, mesh_face_indices = raycast.get_image(mesh_frame, self.hit_max_sampling * 2)
             
             self.mesh_face_indices_2d_list.append(mesh_face_indices)
+            
             max_visible_faces = len(mesh_face_indices[0])
             
             if k <= len(self.cameras) // 2:

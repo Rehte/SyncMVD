@@ -235,22 +235,22 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
                     azim += 360
                 self.camera_poses.append((elevation, azim))
                 idx = i + cam_count + 1
-                self.attention_mask.append([(cam_count+i-1)%cam_count+cam_count+1, idx, (i+1)%cam_count+cam_count+1])
+                # self.attention_mask.append([(cam_count+i-1)%cam_count+cam_count+1, idx, (i+1)%cam_count+cam_count+1])
         
-        # TODO: Initialize uvp and select Camera Views
-        self.uvp_tmp = UVP(texture_size=texture_size, render_size=latent_size, sampling_mode="nearest", channels=4, device=self._execution_device)
-        if mesh_path.lower().endswith(".obj"):
-            self.uvp_tmp.load_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
-        elif mesh_path.lower().endswith(".glb"):
-            self.uvp_tmp.load_glb_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
-        else:
-            assert False, "The mesh file format is not supported. Use .obj or .glb."
-        selected_views = self.uvp_tmp.set_cameras_and_selection(self.camera_poses, centers=camera_centers, camera_distance=4.0)
-        # TODO: Initialize New cameras list with Dynamic Selection of Camera Views
-        # self.camera_poses = self.camera_poses[selected_views]
-        # self.attention_mask = self.attention_mask[selected_views]
+            # TODO: Initialize uvp and select Camera Views
+            self.uvp_tmp = UVP(texture_size=texture_size, render_size=latent_size, sampling_mode="nearest", channels=4, device=self._execution_device)
+            if mesh_path.lower().endswith(".obj"):
+                self.uvp_tmp.load_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
+            elif mesh_path.lower().endswith(".glb"):
+                self.uvp_tmp.load_glb_mesh(mesh_path, scale_factor=mesh_transform["scale"] or 1, autouv=mesh_autouv)
+            else:
+                assert False, "The mesh file format is not supported. Use .obj or .glb."
+            selected_views = self.uvp_tmp.set_cameras_and_selection(self.camera_poses, centers=camera_centers, camera_distance=4.0)
+            # TODO: Initialize New cameras list with Dynamic Selection of Camera Views
+            self.camera_poses = self.camera_poses[selected_views]
+            self.attention_mask = self.attention_mask + [i for i in range(cam_count+1, new_cam_count)]
         
-        # TODO: Initialize New UVP with Dynamic Camera Views
+            # TODO: Initialize New UVP with Dynamic Camera Views
 
 
         # Set up pytorch3D for projection between screen space and UV space
@@ -290,7 +290,7 @@ class StableSyncMVDPipeline(StableDiffusionControlNetPipeline):
         #         self.attention_mask.insert(self.max_hits * j + i, incremented_masks)
 
         self.attention_masks = [
-            attention_mask.copy() for i in range(self.max_hits)
+            self.attention_mask.copy() for i in range(self.max_hits)
         ]
 
         self.attention_masks = [
